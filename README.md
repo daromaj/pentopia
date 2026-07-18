@@ -6,6 +6,22 @@ with the [puzz.link](https://puzz.link) puzzle format.
 
 See [`goal.md`](goal.md) for the high-level idea and current direction.
 
+## Play it
+
+**Live player:** <https://daromaj.github.io/pentopia/>
+
+Puzzles deep-link via `?p=` (or a hash), using the same encoding as
+puzz.link itself, so any Pentopia puzzle URL works in both players:
+
+- The 10×10 sample puzzle:
+  [`?p=pentopia/10/10/2s9ziar5gbi6z6hai9s4//p`](https://daromaj.github.io/pentopia/?p=pentopia/10/10/2s9ziar5gbi6z6hai9s4//p)
+- The same puzzle on puzz.link:
+  [`puzz.link/p?pentopia/10/10/...`](https://puzz.link/p?pentopia/10/10/2s9ziar5gbi6z6hai9s4//p)
+
+The "New puzzle" button generates fresh puzzles (6×6–10×10, three
+difficulty levels) right in the browser — every one has a unique,
+guess-free solution.
+
 ## Status
 
 All roadmap phases implemented: core library (puzz.link codec, shape
