@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Maskable: full-bleed square background (no rounding baked in — the OS
+       applies its own mask shape), motif inset to the inner 60% safe zone
+       (x:30-70, y:20-80) so nothing gets clipped by a circular/squircle
+       mask. -->
+  <rect x="0" y="0" width="100" height="100" fill="#16171a" />
+  <g fill="#5b9bd5" stroke="#16171a" stroke-width="3">
+    <rect x="50" y="20" width="20" height="20" rx="2" />
+    <rect x="30" y="40" width="20" height="20" rx="2" />
+    <rect x="50" y="40" width="20" height="20" rx="2" />
+    <rect x="30" y="60" width="20" height="20" rx="2" />
+    <rect x="50" y="60" width="20" height="20" rx="2" />
+  </g>
+</svg>

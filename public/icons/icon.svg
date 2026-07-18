@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <rect x="0" y="0" width="100" height="100" rx="20" fill="#16171a" />
+  <!-- P-pentomino, 5 unit squares (2 cols x 3 rows), accent-filled with
+       bg-colored strokes between squares (same separated-square look as the
+       in-app bank tiles). -->
+  <g fill="#5b9bd5" stroke="#16171a" stroke-width="3">
+    <rect x="50" y="23" width="18" height="18" rx="2" />
+    <rect x="32" y="41" width="18" height="18" rx="2" />
+    <rect x="50" y="41" width="18" height="18" rx="2" />
+    <rect x="32" y="59" width="18" height="18" rx="2" />
+    <rect x="50" y="59" width="18" height="18" rx="2" />
+  </g>
+</svg>

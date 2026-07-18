@@ -46,6 +46,27 @@ function arrowPoints(cx: number, cy: number, dir: Dir, cell: number): string {
   }
 }
 
+/**
+ * Endpoints for the short shaft line behind an arrow's triangular head: from
+ * just off cell-center (leaves a small clear hub where a multi-arrow clue's
+ * arrows meet) out to the triangle's base (the current gap between center
+ * and base, which otherwise reads as a floating, disconnected triangle).
+ */
+function shaftPoints(cx: number, cy: number, dir: Dir, cell: number): { x1: number; y1: number; x2: number; y2: number } {
+  const near = cell * 0.04; // distance center -> shaft start (small clear hub at the center)
+  const far = cell * 0.14; // distance center -> shaft end (meets the triangle base)
+  switch (dir) {
+    case Dir.Up:
+      return { x1: cx, y1: cy - near, x2: cx, y2: cy - far };
+    case Dir.Down:
+      return { x1: cx, y1: cy + near, x2: cx, y2: cy + far };
+    case Dir.Left:
+      return { x1: cx - near, y1: cy, x2: cx - far, y2: cy };
+    case Dir.Right:
+      return { x1: cx + near, y1: cy, x2: cx + far, y2: cy };
+  }
+}
+
 export interface RenderOptions {
   /** Cell indices implicated in the last "Check" run — highlighted until the next edit. */
   failureCells?: ReadonlySet<number>;
@@ -68,6 +89,12 @@ export function renderBoard(host: HTMLElement, state: PlayState, opts: RenderOpt
     role: 'img',
     'aria-label': 'Pentopia board',
   }) as SVGSVGElement;
+  // Belt-and-suspenders for the flex-centered "shrink to fit both axes"
+  // sizing: `aspect-ratio` pins the intrinsic ratio explicitly (cols:rows),
+  // rather than relying solely on width/height:auto + viewBox-derived
+  // intrinsic sizing, which some engines size inconsistently for a bare
+  // SVG root with no width/height attributes.
+  svg.style.aspectRatio = `${cols} / ${rows}`;
 
   const bg = svgEl('rect', { x: 0, y: 0, width: w, height: h, class: 'board-bg' });
   svg.appendChild(bg);
@@ -98,6 +125,19 @@ export function renderBoard(host: HTMLElement, state: PlayState, opts: RenderOpt
         } else {
           for (const dir of DIRS) {
             if ((clue & dirBit(dir)) === 0) continue;
+            const shaft = shaftPoints(ccx, ccy, dir, CELL);
+            // Shaft drawn first so the (opaque) triangle head layers cleanly
+            // on top of it — reads as one arrow, not a line poking out from
+            // under a floating head.
+            svg.appendChild(
+              svgEl('line', {
+                x1: shaft.x1,
+                y1: shaft.y1,
+                x2: shaft.x2,
+                y2: shaft.y2,
+                class: 'clue-arrow-shaft',
+              }),
+            );
             svg.appendChild(
               svgEl('polygon', { points: arrowPoints(ccx, ccy, dir, CELL), class: 'clue-arrow' }),
             );

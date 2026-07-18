@@ -43,6 +43,10 @@ root.className = 'pentopia-app';
 const toolbar = document.createElement('header');
 toolbar.className = 'toolbar';
 
+const appTitle = document.createElement('div');
+appTitle.className = 'app-title';
+appTitle.textContent = 'Pentopia';
+
 const urlbarMount = document.createElement('div');
 urlbarMount.className = 'urlbar-mount';
 
@@ -111,15 +115,27 @@ difficultySelect.value = 'medium';
 const generateBtn = document.createElement('button');
 generateBtn.type = 'button';
 generateBtn.textContent = 'New puzzle';
+generateBtn.classList.add('btn-primary');
 generateBtn.dataset.hook = 'generate-puzzle';
 
-actions.append(undoBtn, redoBtn, checkBtn, hintBtn, resetBtn, clueCount, sizeSelect, difficultySelect, generateBtn);
-toolbar.append(urlbarMount, actions);
+const editGroup = document.createElement('div');
+editGroup.className = 'action-group';
+editGroup.append(undoBtn, redoBtn, checkBtn, hintBtn, resetBtn, clueCount);
+
+const generateGroup = document.createElement('div');
+generateGroup.className = 'action-group generate-group';
+generateGroup.append(sizeSelect, difficultySelect, generateBtn);
+
+actions.append(editGroup, generateGroup);
+toolbar.append(appTitle, urlbarMount, actions);
 
 const banner = document.createElement('div');
 banner.className = 'banner';
 banner.hidden = true;
 banner.dataset.hook = 'banner';
+
+const playArea = document.createElement('div');
+playArea.className = 'play-area';
 
 const boardArea = document.createElement('main');
 boardArea.className = 'board-area';
@@ -140,7 +156,8 @@ favoritesHost.className = 'favorites-host';
 
 bankColumn.append(bankHost, favoritesHost);
 boardArea.append(boardHost, bankColumn);
-root.append(toolbar, banner, boardArea);
+playArea.append(banner, boardArea);
+root.append(toolbar, playArea);
 appRoot.append(root);
 
 // --- State --------------------------------------------------------------
