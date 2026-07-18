@@ -21,6 +21,9 @@ of each of the 12 free pentominoes), standard arrow clues, no
 transparent-mode overlap. The tetromino/double-tetromino bank presets and
 other variants can follow once that's solid.
 
+Start with **small grids** too, and grow the size once generation/solving
+is working reliably at that scale.
+
 ## Reference material already captured
 
 Before any implementation, the puzzle format itself was researched and
