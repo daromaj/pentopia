@@ -7,3 +7,5 @@ export * from './bank';
 export * from './codec/number16';
 export * from './codec/pieceBank';
 export * from './codec/url';
+export * from './codec/pzprv3';
+export * from './validator';
