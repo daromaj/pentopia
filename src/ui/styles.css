@@ -263,6 +263,8 @@ button:disabled {
   color: var(--solved-fg);
   font-size: 1.1rem;
   text-align: center;
+  /* Clicking the banner replays the celebration (wired in app.ts). */
+  cursor: pointer;
 }
 
 .banner-fail {

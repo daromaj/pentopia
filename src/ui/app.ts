@@ -294,12 +294,24 @@ function initAttemptState(key: string): void {
     // The board SVG doesn't exist yet — every caller renders right after
     // this returns, so defer one frame and play over the freshly laid-out
     // board.
-    requestAnimationFrame(() => {
-      const svg = boardHost.querySelector<SVGSVGElement>('svg.board-svg');
-      if (svg) playCelebration(boardHost, svg, state.puzzle, state.cellState);
-    });
+    requestAnimationFrame(celebrateCurrentBoard);
   }
 }
+
+/** Replay a celebration over the current board (animation only, no dialog). */
+function celebrateCurrentBoard(): void {
+  const svg = boardHost.querySelector<SVGSVGElement>('svg.board-svg');
+  if (svg) playCelebration(boardHost, svg, state.puzzle, state.cellState);
+}
+
+// Clicking the solved banner replays the show (the share button inside it
+// keeps its own job — opening the dialog — so clicks on any button are left
+// alone).
+banner.addEventListener('click', (e) => {
+  if (!banner.classList.contains('banner-solved')) return;
+  if (e.target instanceof Element && e.target.closest('button')) return;
+  celebrateCurrentBoard();
+});
 
 /** Load `puzzle` through the full path — reset state, restore saved progress, clear stale Check results, re-render — shared by urlbar Load, favorites, and (new) puzzle generation. */
 function loadPuzzleAndRestore(puzzle: Puzzle): void {
@@ -363,8 +375,10 @@ function isSolved(): boolean {
 function updateBanner(solved: boolean): void {
   banner.replaceChildren();
   banner.classList.remove('banner-solved', 'banner-fail', 'banner-hint', 'banner-challenge');
+  banner.removeAttribute('title');
   if (solved) {
     banner.classList.add('banner-solved');
+    banner.title = 'Replay the celebration';
     const solveMs = loadSolveTime(encodeUrl(state.puzzle));
     const text = document.createElement('span');
     text.textContent = solveMs !== null ? `Solved in ${formatTime(solveMs)}!` : 'Solved!';
