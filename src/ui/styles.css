@@ -265,6 +265,10 @@ button:disabled {
 
 .bank-cell {
   fill: var(--cell-shaded);
+  /* Panel-background stroke gives every square of the shape its own visible
+     border (reads as separated unit squares in both light and dark themes). */
+  stroke: var(--panel-bg);
+  stroke-width: 1.5;
 }
 
 .bank-tile.exhausted .bank-cell {

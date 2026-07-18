@@ -23,17 +23,26 @@ function svgEl(tag: string, attrs: Record<string, string | number> = {}): SVGEle
   return el;
 }
 
-/** Triangle polygon points for one arrow, pointing outward from cell-center (cx,cy) toward `dir`. */
-function arrowPoints(cx: number, cy: number, dir: Dir, size: number): string {
+/**
+ * Triangle polygon points for one arrow, pointing outward from cell-center
+ * (cx,cy) toward `dir`. Each arrow lives in the *outer ring* of the cell —
+ * tip near the cell edge, base well clear of the center — so a multi-arrow
+ * clue keeps visible whitespace between the arrows instead of them all
+ * crowding the middle.
+ */
+function arrowPoints(cx: number, cy: number, dir: Dir, cell: number): string {
+  const tip = cell * 0.4; // distance center -> arrow tip (near the cell edge)
+  const base = cell * 0.14; // distance center -> arrow base (clear gap in the middle)
+  const halfW = cell * 0.13;
   switch (dir) {
     case Dir.Up:
-      return `${cx},${cy - size * 1.4} ${cx - size},${cy - size * 0.2} ${cx + size},${cy - size * 0.2}`;
+      return `${cx},${cy - tip} ${cx - halfW},${cy - base} ${cx + halfW},${cy - base}`;
     case Dir.Down:
-      return `${cx},${cy + size * 1.4} ${cx - size},${cy + size * 0.2} ${cx + size},${cy + size * 0.2}`;
+      return `${cx},${cy + tip} ${cx - halfW},${cy + base} ${cx + halfW},${cy + base}`;
     case Dir.Left:
-      return `${cx - size * 1.4},${cy} ${cx - size * 0.2},${cy - size} ${cx - size * 0.2},${cy + size}`;
+      return `${cx - tip},${cy} ${cx - base},${cy - halfW} ${cx - base},${cy + halfW}`;
     case Dir.Right:
-      return `${cx + size * 1.4},${cy} ${cx + size * 0.2},${cy - size} ${cx + size * 0.2},${cy + size}`;
+      return `${cx + tip},${cy} ${cx + base},${cy - halfW} ${cx + base},${cy + halfW}`;
   }
 }
 
@@ -92,7 +101,7 @@ export function renderBoard(host: HTMLElement, state: PlayState, opts: RenderOpt
           for (const dir of DIRS) {
             if ((clue & dirBit(dir)) === 0) continue;
             svg.appendChild(
-              svgEl('polygon', { points: arrowPoints(ccx, ccy, dir, CELL * 0.16), class: 'clue-arrow' }),
+              svgEl('polygon', { points: arrowPoints(ccx, ccy, dir, CELL), class: 'clue-arrow' }),
             );
           }
         }
