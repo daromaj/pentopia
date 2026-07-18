@@ -279,14 +279,26 @@ initAttemptState(encodeUrl(state.puzzle));
 
 /**
  * Establish solve/attempt bookkeeping for a freshly (re)loaded board. A
- * board that arrives already solved gets no celebration (it was celebrated
- * when it happened) and no live attempt — its recorded time, if any, is the
- * only honest one it will ever have.
+ * board that arrives already solved gets no live attempt — its recorded
+ * time, if any, is the only honest one it will ever have — but it does
+ * replay the celebration (animation only, no dialog): refreshing a solved
+ * page should still feel like a win. The key still goes into
+ * `celebratedKeys` so undo/redo around the original solving move can't
+ * re-trigger the full solve flow.
  */
 function initAttemptState(key: string): void {
   wasSolved = isSolved();
   attemptLive = !wasSolved;
-  if (wasSolved) celebratedKeys.add(key);
+  if (wasSolved) {
+    celebratedKeys.add(key);
+    // The board SVG doesn't exist yet — every caller renders right after
+    // this returns, so defer one frame and play over the freshly laid-out
+    // board.
+    requestAnimationFrame(() => {
+      const svg = boardHost.querySelector<SVGSVGElement>('svg.board-svg');
+      if (svg) playCelebration(boardHost, svg, state.puzzle, state.cellState);
+    });
+  }
 }
 
 /** Load `puzzle` through the full path — reset state, restore saved progress, clear stale Check results, re-render — shared by urlbar Load, favorites, and (new) puzzle generation. */
