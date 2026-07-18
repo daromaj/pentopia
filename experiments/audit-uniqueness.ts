@@ -40,7 +40,7 @@ import { orientations, canonicalKey } from '../src/core/shape';
 import { bankCounts } from '../src/core/bank';
 import { NO_CLUE } from '../src/core/types';
 import type { Puzzle, Solution, Shape } from '../src/core/types';
-import { renderClues, renderCombined, renderShaded } from '../src/cli/ascii';
+import { renderClues, renderShaded } from '../src/cli/ascii';
 
 const T_START = performance.now();
 const BUDGET_MS = 9 * 60 * 1000; // leave headroom under the 10-minute cap
