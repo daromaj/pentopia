@@ -196,6 +196,17 @@ export function loadSolveTime(key: string, storage: StorageLike | null = default
   return loadMs(SOLVE_TIME_PREFIX, key, storage);
 }
 
+/** Wipe both timer entries for puzzle `key` — a Reset starting a fresh timed attempt. */
+export function clearSolveRecord(key: string, storage: StorageLike | null = defaultStorage()): void {
+  if (!storage) return;
+  try {
+    storage.removeItem(ELAPSED_PREFIX + key);
+    storage.removeItem(SOLVE_TIME_PREFIX + key);
+  } catch {
+    // ignore
+  }
+}
+
 /** The player's saved display name for challenge links ('' if unset). */
 export function getPlayerName(storage: StorageLike | null = defaultStorage()): string {
   if (!storage) return '';

@@ -39,6 +39,7 @@ import {
   loadElapsed,
   saveSolveTime,
   loadSolveTime,
+  clearSolveRecord,
   getPlayerName,
   setPlayerName,
 } from './persist';
@@ -98,7 +99,7 @@ hintBtn.dataset.hook = 'hint-btn';
 const resetBtn = document.createElement('button');
 resetBtn.type = 'button';
 resetBtn.textContent = 'Reset';
-resetBtn.title = 'Clear the board for this puzzle (undoable)';
+resetBtn.title = 'Start over: clear the board and restart the solve clock (board change is undoable)';
 resetBtn.dataset.hook = 'reset-btn';
 
 const favoriteBtn = document.createElement('button');
@@ -218,6 +219,14 @@ let wasSolved = false;
 const celebratedKeys = new Set<string>();
 /** True while the timer is paused only because the tab is hidden (so visibility-restore knows to resume). */
 let timerPausedByHide = false;
+/**
+ * Whether the current board state represents a live timed attempt. False
+ * when a puzzle loads already-solved (there's no honest clock for it — e.g.
+ * progress saved before timing existed), so toggling a cell off and back on
+ * can never record a bogus seconds-long "solve". Reset starts a fresh
+ * attempt and flips it back on.
+ */
+let attemptLive = true;
 
 /**
  * An incoming challenge (`?p=…&t=…&n=…&c=…` from a shared link), pinned to
@@ -266,7 +275,19 @@ function restoreProgress(key: string): void {
 }
 
 restoreProgress(encodeUrl(state.puzzle));
-wasSolved = isSolved();
+initAttemptState(encodeUrl(state.puzzle));
+
+/**
+ * Establish solve/attempt bookkeeping for a freshly (re)loaded board. A
+ * board that arrives already solved gets no celebration (it was celebrated
+ * when it happened) and no live attempt — its recorded time, if any, is the
+ * only honest one it will ever have.
+ */
+function initAttemptState(key: string): void {
+  wasSolved = isSolved();
+  attemptLive = !wasSolved;
+  if (wasSolved) celebratedKeys.add(key);
+}
 
 /** Load `puzzle` through the full path — reset state, restore saved progress, clear stale Check results, re-render — shared by urlbar Load, favorites, and (new) puzzle generation. */
 function loadPuzzleAndRestore(puzzle: Puzzle): void {
@@ -275,7 +296,7 @@ function loadPuzzleAndRestore(puzzle: Puzzle): void {
   restoreProgress(key);
   timer = createTimer(loadElapsed(key) ?? 0);
   timerPausedByHide = false;
-  wasSolved = isSolved();
+  initAttemptState(key);
   lastFailures = [];
   failureCells = null;
   currentHint = null;
@@ -442,15 +463,24 @@ function onBoardChange(): void {
   const solved = isSolved();
   const newlySolved = solved && !wasSolved;
 
-  // First edit starts the clock; a puzzle whose solve time is already on
-  // record (e.g. being replayed after a reset) never restarts it.
-  if (!solved && loadSolveTime(key) === null) startTimer(timer);
+  // The first edit that actually puts paint on the board starts the clock —
+  // an empty board (fresh load, or the Reset edit itself) hasn't begun the
+  // attempt yet. A puzzle whose solve time is already on record never
+  // restarts its clock.
+  const boardHasPaint = state.cellState.some((v) => v !== UNTOUCHED);
+  if (!solved && boardHasPaint && loadSolveTime(key) === null) startTimer(timer);
 
   let solveMs: number | null = null;
   if (newlySolved) {
     pauseTimer(timer);
-    solveMs = loadSolveTime(key) ?? elapsedMs(timer);
-    if (loadSolveTime(key) === null) saveSolveTime(key, solveMs);
+    solveMs = loadSolveTime(key);
+    // Record a time only for a live attempt with real clock behind it —
+    // re-solving a board that loaded solved (or was un-toggled and back)
+    // must never mint a fresh seconds-long "record".
+    if (solveMs === null && attemptLive && elapsedMs(timer) > 0) {
+      solveMs = elapsedMs(timer);
+      saveSolveTime(key, solveMs);
+    }
   }
   wasSolved = solved;
 
@@ -494,6 +524,16 @@ redoBtn.addEventListener('click', () => {
 });
 resetBtn.addEventListener('click', () => {
   resetBoard(state);
+  // Reset = fresh timed attempt: zero the clock, forget the recorded solve
+  // time, and re-arm the celebration. (The board clear itself stays undoable,
+  // but undoing back to the solved position won't re-record a time — the
+  // clock is at zero, which the recording guard above rejects.)
+  const key = encodeUrl(state.puzzle);
+  clearSolveRecord(key);
+  timer = createTimer(0);
+  timerPausedByHide = false;
+  celebratedKeys.delete(key);
+  attemptLive = true;
   onBoardChange();
 });
 checkBtn.addEventListener('click', () => {

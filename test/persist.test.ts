@@ -16,6 +16,7 @@ import {
   loadSolveTime,
   getPlayerName,
   setPlayerName,
+  clearSolveRecord,
 } from '../src/ui/persist';
 import type { StorageLike } from '../src/ui/persist';
 import { hashString, favoriteSlug, buildPrUrl, defaultFavoriteName } from '../src/ui/favorites';
@@ -300,5 +301,18 @@ describe('solve timer persistence', () => {
     expect(getPlayerName(storage)).toBe('');
     setPlayerName('Dariusz', storage);
     expect(getPlayerName(storage)).toBe('Dariusz');
+  });
+});
+
+describe('clearSolveRecord', () => {
+  it('removes both timer entries for the key, leaving others alone', () => {
+    const storage = makeFakeStorage();
+    saveElapsed('k1', 100, storage);
+    saveSolveTime('k1', 200, storage);
+    saveElapsed('k2', 300, storage);
+    clearSolveRecord('k1', storage);
+    expect(loadElapsed('k1', storage)).toBeNull();
+    expect(loadSolveTime('k1', storage)).toBeNull();
+    expect(loadElapsed('k2', storage)).toBe(300);
   });
 });
