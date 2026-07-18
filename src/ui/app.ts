@@ -26,8 +26,28 @@ import {
   hasDeepLink,
   updateHash,
 } from './urlbar';
-import { saveProgress, loadProgress, setLastPlayed, getLastPlayed, addFavorite, removeFavorite, isFavorite } from './persist';
+import {
+  saveProgress,
+  loadProgress,
+  setLastPlayed,
+  getLastPlayed,
+  addFavorite,
+  removeFavorite,
+  isFavorite,
+  saveElapsed,
+  loadElapsed,
+  saveSolveTime,
+  loadSolveTime,
+  getPlayerName,
+  setPlayerName,
+} from './persist';
 import { createFavoritesPanel, defaultFavoriteName } from './favorites';
+import { createTimer, startTimer, pauseTimer, isRunning, elapsedMs, formatTime } from './timer';
+import type { SolveTimer } from './timer';
+import { playCelebration } from './celebrate';
+import { parseChallenge, verifyChallenge } from './share';
+import { showSolvedDialog } from './solvedDialog';
+import type { ChallengeContext } from './solvedDialog';
 
 const appRoot = document.getElementById('app');
 if (!appRoot) {
@@ -187,6 +207,46 @@ let failureCells: Set<number> | null = null;
 /** Last "Hint" result — highlight + banner persist until the next board edit (same lifecycle as `failureCells`/`lastFailures`). Learning mode never applies this for the player; it's display-only. */
 let currentHint: Hint | null = null;
 
+// --- Solve timer + challenge context ---------------------------------------
+
+/** Per-puzzle solve clock; recreated on every puzzle load from its saved elapsed time. */
+let timer: SolveTimer = createTimer(loadElapsed(encodeUrl(state.puzzle)) ?? 0);
+/** Whether the board validated on the previous render — solve detection fires on the false→true edge. */
+let wasSolved = false;
+/** Puzzle keys already celebrated this session, so undo/redo around the solving move can't re-trigger the show. */
+const celebratedKeys = new Set<string>();
+/** True while the timer is paused only because the tab is hidden (so visibility-restore knows to resume). */
+let timerPausedByHide = false;
+
+/**
+ * An incoming challenge (`?p=…&t=…&n=…&c=…` from a shared link), pinned to
+ * the puzzle key it arrived with. `verified` starts false and flips via an
+ * async checksum check that re-renders when it lands.
+ */
+interface IncomingChallenge extends ChallengeContext {
+  puzzleKey: string;
+}
+let incomingChallenge: IncomingChallenge | null = null;
+{
+  const params = new URLSearchParams(window.location.search);
+  const parsed = params.get('p') ? parseChallenge(window.location.search) : null;
+  if (parsed) {
+    const puzzleKey = encodeUrl(state.puzzle);
+    incomingChallenge = { name: parsed.name, timeMs: parsed.timeMs, verified: false, puzzleKey };
+    void verifyChallenge(puzzleKey, parsed).then((ok) => {
+      if (incomingChallenge?.puzzleKey === puzzleKey) {
+        incomingChallenge.verified = ok;
+        rerender();
+      }
+    });
+  }
+}
+
+/** The active challenge if the currently loaded puzzle is the one it was issued for. */
+function challengeForCurrentPuzzle(): IncomingChallenge | null {
+  return incomingChallenge && incomingChallenge.puzzleKey === encodeUrl(state.puzzle) ? incomingChallenge : null;
+}
+
 /**
  * Overwrite `state.cellState` with any saved progress for puzzle `key`
  * (goes through the same "clean undo/redo" contract `loadPuzzle` already
@@ -205,11 +265,16 @@ function restoreProgress(key: string): void {
 }
 
 restoreProgress(encodeUrl(state.puzzle));
+wasSolved = isSolved();
 
 /** Load `puzzle` through the full path — reset state, restore saved progress, clear stale Check results, re-render — shared by urlbar Load, favorites, and (new) puzzle generation. */
 function loadPuzzleAndRestore(puzzle: Puzzle): void {
   loadPuzzle(state, puzzle);
-  restoreProgress(encodeUrl(state.puzzle));
+  const key = encodeUrl(state.puzzle);
+  restoreProgress(key);
+  timer = createTimer(loadElapsed(key) ?? 0);
+  timerPausedByHide = false;
+  wasSolved = isSolved();
   lastFailures = [];
   failureCells = null;
   currentHint = null;
@@ -263,10 +328,22 @@ function isSolved(): boolean {
 
 function updateBanner(solved: boolean): void {
   banner.replaceChildren();
-  banner.classList.remove('banner-solved', 'banner-fail', 'banner-hint');
+  banner.classList.remove('banner-solved', 'banner-fail', 'banner-hint', 'banner-challenge');
   if (solved) {
     banner.classList.add('banner-solved');
-    banner.textContent = 'Solved!';
+    const solveMs = loadSolveTime(encodeUrl(state.puzzle));
+    const text = document.createElement('span');
+    text.textContent = solveMs !== null ? `Solved in ${formatTime(solveMs)}!` : 'Solved!';
+    banner.appendChild(text);
+    if (solveMs !== null) {
+      // Re-entry point to the share dialog after the solve-moment popup is gone.
+      const share = document.createElement('button');
+      share.type = 'button';
+      share.className = 'banner-share-btn';
+      share.textContent = 'Challenge friends';
+      share.addEventListener('click', () => openSolvedDialog(solveMs));
+      banner.appendChild(share);
+    }
     banner.hidden = false;
     return;
   }
@@ -291,6 +368,17 @@ function updateBanner(solved: boolean): void {
       list.appendChild(li);
     }
     banner.append(heading, list);
+    banner.hidden = false;
+    return;
+  }
+  // Lowest priority: the standing challenge from a shared link, shown while
+  // its puzzle is loaded and there's nothing more urgent to say.
+  const challenge = challengeForCurrentPuzzle();
+  if (challenge) {
+    banner.classList.add('banner-challenge');
+    banner.textContent =
+      `🏁 ${challenge.name} solved this in ${formatTime(challenge.timeMs)} — can you beat it?` +
+      (challenge.verified ? '' : ' (unverified time)');
     banner.hidden = false;
     return;
   }
@@ -319,11 +407,24 @@ function rerender(): void {
   redoBtn.disabled = state.redoStack.length === 0;
 }
 
-/** Persist the current board (cellState) + mark this puzzle as last-played. Any storage failure is silently swallowed inside persist.ts. */
+/** Persist the current board (cellState) + solve clock + mark this puzzle as last-played. Any storage failure is silently swallowed inside persist.ts. */
 function autosaveProgress(): void {
   const key = encodeUrl(state.puzzle);
   saveProgress(key, state.cellState);
+  saveElapsed(key, elapsedMs(timer));
   setLastPlayed(key);
+}
+
+/** Open the solved dialog (time, name, share banner) for the current puzzle. */
+function openSolvedDialog(timeMs: number): void {
+  showSolvedDialog({
+    puzzleKey: encodeUrl(state.puzzle),
+    timeMs,
+    sizeText: `${state.puzzle.cols}×${state.puzzle.rows}`,
+    challenge: challengeForCurrentPuzzle(),
+    getName: getPlayerName,
+    setName: setPlayerName,
+  });
 }
 
 function onBoardChange(): void {
@@ -332,9 +433,51 @@ function onBoardChange(): void {
   lastFailures = [];
   failureCells = null;
   currentHint = null;
+
+  const key = encodeUrl(state.puzzle);
+  const solved = isSolved();
+  const newlySolved = solved && !wasSolved;
+
+  // First edit starts the clock; a puzzle whose solve time is already on
+  // record (e.g. being replayed after a reset) never restarts it.
+  if (!solved && loadSolveTime(key) === null) startTimer(timer);
+
+  let solveMs: number | null = null;
+  if (newlySolved) {
+    pauseTimer(timer);
+    solveMs = loadSolveTime(key) ?? elapsedMs(timer);
+    if (loadSolveTime(key) === null) saveSolveTime(key, solveMs);
+  }
+  wasSolved = solved;
+
   autosaveProgress();
   rerender();
+
+  // Celebration + dialog fire once per puzzle per session, on the edit that
+  // solved it — undo/redo shenanigans around that edit can't re-trigger them.
+  if (newlySolved && solveMs !== null && !celebratedKeys.has(key)) {
+    celebratedKeys.add(key);
+    const svg = boardHost.querySelector<SVGSVGElement>('svg.board-svg');
+    const delay = svg ? playCelebration(boardHost, svg, state.puzzle, state.cellState) : 0;
+    const ms = solveMs;
+    setTimeout(() => openSolvedDialog(ms), delay);
+  }
 }
+
+// Pause the clock while the tab is hidden — thinking time counts, being at
+// lunch doesn't. Resume only clocks we paused ourselves.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (isRunning(timer)) {
+      pauseTimer(timer);
+      saveElapsed(encodeUrl(state.puzzle), elapsedMs(timer));
+      timerPausedByHide = true;
+    }
+  } else if (timerPausedByHide) {
+    timerPausedByHide = false;
+    startTimer(timer);
+  }
+});
 
 attachBoardInteraction(boardHost, state, onBoardChange);
 attachKeyboardShortcuts(state, onBoardChange);

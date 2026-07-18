@@ -10,6 +10,12 @@ import {
   isFavorite,
   getFavoritesCollapsed,
   setFavoritesCollapsed,
+  saveElapsed,
+  loadElapsed,
+  saveSolveTime,
+  loadSolveTime,
+  getPlayerName,
+  setPlayerName,
 } from '../src/ui/persist';
 import type { StorageLike } from '../src/ui/persist';
 import { hashString, favoriteSlug, buildPrUrl, defaultFavoriteName } from '../src/ui/favorites';
@@ -254,5 +260,45 @@ describe('PR-URL builder', () => {
     const puzzle = makePuzzle(10, 10, [0, 1, 2]);
     const when = new Date('2026-07-18T12:00:00.000Z');
     expect(defaultFavoriteName(puzzle, when)).toBe('10x10, 3 clues, 2026-07-18');
+  });
+});
+
+describe('solve timer persistence', () => {
+  it('round-trips elapsed and solve times per key', () => {
+    const storage = makeFakeStorage();
+    saveElapsed('k1', 1234.6, storage);
+    saveSolveTime('k1', 9876, storage);
+    expect(loadElapsed('k1', storage)).toBe(1235); // rounded to whole ms
+    expect(loadSolveTime('k1', storage)).toBe(9876);
+    expect(loadElapsed('k2', storage)).toBeNull();
+    expect(loadSolveTime('k2', storage)).toBeNull();
+  });
+
+  it('rejects corrupt stored values', () => {
+    const storage = makeFakeStorage();
+    storage.setItem('pentopia.elapsed.k1', 'NaNsense');
+    storage.setItem('pentopia.solveTime.k1', '-42');
+    expect(loadElapsed('k1', storage)).toBeNull();
+    expect(loadSolveTime('k1', storage)).toBeNull();
+  });
+
+  it('evicts timer entries together with their progress entry', () => {
+    const storage = makeFakeStorage();
+    const cells = new Uint8Array(4);
+    saveProgress('k0', cells, storage);
+    saveElapsed('k0', 5000, storage);
+    saveSolveTime('k0', 6000, storage);
+    // Push 50 more progress entries so k0 (the oldest) is evicted.
+    for (let i = 1; i <= 50; i++) saveProgress(`k${i}`, cells, storage);
+    expect(loadProgress('k0', storage)).toBeNull();
+    expect(loadElapsed('k0', storage)).toBeNull();
+    expect(loadSolveTime('k0', storage)).toBeNull();
+  });
+
+  it('stores the player name', () => {
+    const storage = makeFakeStorage();
+    expect(getPlayerName(storage)).toBe('');
+    setPlayerName('Dariusz', storage);
+    expect(getPlayerName(storage)).toBe('Dariusz');
   });
 });

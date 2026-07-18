@@ -291,6 +291,8 @@ button:disabled {
 }
 
 .board-host {
+  /* Positioned so celebration overlays (canvas/stamp) can pin to the board's box. */
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
@@ -650,4 +652,256 @@ button:disabled {
   .clue-count {
     padding: 0.3rem 0.15rem;
   }
+}
+
+/* --- Solve celebrations --- */
+
+/* SVG rects animate around their own centers. */
+.board-svg rect.cell-shaded {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+}
+
+.cel-pop {
+  animation: cel-pop 0.45s ease both;
+}
+
+@keyframes cel-pop {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.25);
+    fill: var(--pc, var(--accent));
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.cel-wave {
+  animation: cel-wave 0.5s ease both;
+}
+
+@keyframes cel-wave {
+  0% {
+    fill: var(--cell-shaded);
+  }
+  40% {
+    fill: #d9a441;
+    transform: scale(1.12);
+  }
+  100% {
+    fill: var(--cell-shaded);
+    transform: scale(1);
+  }
+}
+
+.cel-settle {
+  animation: cel-settle 0.5s ease;
+}
+
+@keyframes cel-settle {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.02);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.cel-canvas {
+  position: absolute;
+  z-index: 12;
+  pointer-events: none;
+}
+
+.cel-sweep {
+  position: absolute;
+  z-index: 11;
+  pointer-events: none;
+  border-radius: var(--radius-card);
+  background: linear-gradient(
+    115deg,
+    transparent 30%,
+    rgba(217, 164, 65, 0.55) 48%,
+    rgba(255, 255, 255, 0.8) 52%,
+    rgba(217, 164, 65, 0.55) 56%,
+    transparent 74%
+  );
+  background-size: 260% 100%;
+  background-position: 130% 0;
+  animation: cel-sweep 0.9s ease-in-out forwards;
+}
+
+@keyframes cel-sweep {
+  0% {
+    opacity: 1;
+    background-position: 130% 0;
+  }
+  100% {
+    opacity: 0;
+    background-position: -40% 0;
+  }
+}
+
+.cel-stamp {
+  position: absolute;
+  z-index: 12;
+  pointer-events: none;
+  transform: translate(-50%, -50%) rotate(-7deg) scale(2.6);
+  opacity: 0;
+  font-weight: 800;
+  font-size: clamp(1.4rem, 6vmin, 2.4rem);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--solved-bg);
+  border: 3px solid var(--solved-bg);
+  border-radius: 6px;
+  padding: 0.2em 0.6em;
+  background: color-mix(in srgb, var(--panel-bg) 82%, transparent);
+}
+
+.cel-stamp-in {
+  animation: cel-stamp-in 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) forwards;
+}
+
+@keyframes cel-stamp-in {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) rotate(-7deg) scale(2.6);
+  }
+  70% {
+    opacity: 1;
+    transform: translate(-50%, -50%) rotate(-7deg) scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -50%) rotate(-7deg) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cel-pop,
+  .cel-wave,
+  .cel-settle,
+  .cel-sweep,
+  .cel-stamp-in {
+    animation-duration: 0.01s !important;
+  }
+}
+
+/* --- Challenge banner + solved banner share button --- */
+
+.banner-challenge {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.banner-share-btn {
+  margin-left: 0.7rem;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.2rem 0.7rem;
+  border: none;
+  border-radius: var(--radius-btn);
+  background: var(--panel-bg);
+  color: var(--solved-bg);
+  cursor: pointer;
+}
+
+/* --- Solved dialog --- */
+
+.solved-dialog {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--panel-bg);
+  color: var(--fg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  padding: 1.2rem 1.4rem;
+  width: min(92vw, 26rem);
+  text-align: center;
+}
+
+.solved-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.solved-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--solved-bg);
+}
+
+.solved-time {
+  font-size: 2.2rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.solved-meta {
+  font-size: 0.85rem;
+  color: var(--grid-line);
+  margin-bottom: 0.6rem;
+}
+
+.solved-vs {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 0.6rem;
+}
+
+.solved-name-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--grid-line);
+  text-align: left;
+  margin-bottom: 0.6rem;
+}
+
+.solved-name-label input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 0.25rem;
+  font: inherit;
+  font-size: 1rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-btn);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.solved-banner {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-btn);
+  margin-bottom: 0.8rem;
+}
+
+.solved-buttons {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.solved-status {
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+  color: var(--solved-bg);
+  font-weight: 600;
 }

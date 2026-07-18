@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Challenge landing page. Chat-app link crawlers (WhatsApp, Telegram,
+      iMessage, Slack…) don't execute JS, so this page's whole reason to
+      exist is to hold static Open Graph tags + a pre-rendered preview image
+      that make a shared challenge link unfurl into a proper card. Humans
+      who actually click it are immediately redirected into the player with
+      the challenge params (?p=…&t=…&n=…&c=…) intact.
+    -->
+    <title>Pentopia — can you beat my time?</title>
+    <meta name="description" content="I solved this Pentopia puzzle. Follow the link to try the same board and beat my time." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Pentopia" />
+    <meta property="og:title" content="Pentopia — can you beat my time?" />
+    <meta property="og:description" content="I solved this pentomino deduction puzzle. Tap to play the same board and beat my time." />
+    <meta property="og:image" content="https://daromaj.github.io/pentopia/og-challenge.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#faf9f6" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#16171a" />
+    <script>
+      // Hand the human over to the player, params intact. replace() keeps
+      // this hop out of history so Back doesn't bounce through it.
+      location.replace('./' + location.search + location.hash);
+    </script>
+  </head>
+  <body>
+    <noscript>
+      <p><a id="fallback" href="./">Open the puzzle</a> (JavaScript is required to carry the challenge details over).</p>
+    </noscript>
+  </body>
+</html>

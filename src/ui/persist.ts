@@ -35,6 +35,9 @@ const PROGRESS_PREFIX = 'pentopia.progress.';
 const PROGRESS_INDEX_KEY = 'pentopia.progress.index';
 const LAST_PLAYED_KEY = 'pentopia.lastPlayed';
 const FAVORITES_KEY = 'pentopia.favorites';
+const ELAPSED_PREFIX = 'pentopia.elapsed.';
+const SOLVE_TIME_PREFIX = 'pentopia.solveTime.';
+const PLAYER_NAME_KEY = 'pentopia.playerName';
 
 /** Cap on the number of stored progress entries; oldest (by savedAt) is evicted first. */
 const MAX_PROGRESS_ENTRIES = 50;
@@ -102,7 +105,13 @@ export function saveProgress(key: string, cellState: Uint8Array, storage: Storag
         if (index[i]!.savedAt < index[oldestPos]!.savedAt) oldestPos = i;
       }
       const [evicted] = index.splice(oldestPos, 1);
-      if (evicted) storage.removeItem(PROGRESS_PREFIX + evicted.key);
+      if (evicted) {
+        storage.removeItem(PROGRESS_PREFIX + evicted.key);
+        // The timer entries ride along with progress — evict them together
+        // so they can't accumulate unbounded for puzzles we no longer track.
+        storage.removeItem(ELAPSED_PREFIX + evicted.key);
+        storage.removeItem(SOLVE_TIME_PREFIX + evicted.key);
+      }
     }
 
     storage.setItem(PROGRESS_PREFIX + key, encodeCellState(cellState));
@@ -141,6 +150,68 @@ export function getLastPlayed(storage: StorageLike | null = defaultStorage()): s
     return storage.getItem(LAST_PLAYED_KEY);
   } catch {
     return null;
+  }
+}
+
+// --- Solve timer ------------------------------------------------------------
+
+function saveMs(prefix: string, key: string, ms: number, storage: StorageLike | null): void {
+  if (!storage) return;
+  try {
+    storage.setItem(prefix + key, String(Math.max(0, Math.round(ms))));
+  } catch {
+    // ignore
+  }
+}
+
+function loadMs(prefix: string, key: string, storage: StorageLike | null): number | null {
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(prefix + key);
+    if (raw === null) return null;
+    const ms = Number(raw);
+    return Number.isFinite(ms) && ms >= 0 ? ms : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Persist the in-progress solve clock for puzzle `key` (ms of elapsed play time). */
+export function saveElapsed(key: string, ms: number, storage: StorageLike | null = defaultStorage()): void {
+  saveMs(ELAPSED_PREFIX, key, ms, storage);
+}
+
+/** The saved in-progress solve clock for puzzle `key`, or `null` if none. */
+export function loadElapsed(key: string, storage: StorageLike | null = defaultStorage()): number | null {
+  return loadMs(ELAPSED_PREFIX, key, storage);
+}
+
+/** Persist the final solve time for puzzle `key` — set once, when the board first validates. */
+export function saveSolveTime(key: string, ms: number, storage: StorageLike | null = defaultStorage()): void {
+  saveMs(SOLVE_TIME_PREFIX, key, ms, storage);
+}
+
+/** The recorded final solve time for puzzle `key`, or `null` if it hasn't been solved here. */
+export function loadSolveTime(key: string, storage: StorageLike | null = defaultStorage()): number | null {
+  return loadMs(SOLVE_TIME_PREFIX, key, storage);
+}
+
+/** The player's saved display name for challenge links ('' if unset). */
+export function getPlayerName(storage: StorageLike | null = defaultStorage()): string {
+  if (!storage) return '';
+  try {
+    return storage.getItem(PLAYER_NAME_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export function setPlayerName(name: string, storage: StorageLike | null = defaultStorage()): void {
+  if (!storage) return;
+  try {
+    storage.setItem(PLAYER_NAME_KEY, name);
+  } catch {
+    // ignore
   }
 }
 
