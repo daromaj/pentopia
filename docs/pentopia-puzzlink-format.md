@@ -395,6 +395,52 @@ the mistake needed to trigger one specific check, so they can be used
 directly to validate a from-scratch solver/validator implementation
 against the reference engine's behavior.
 
+## 5. Solvability: negative constraints are the primary deduction engine
+
+A well-formed Pentopia puzzle should never require the solver to guess and
+backtrack — every cell's shaded/unshaded status should be forced by a
+chain of rule applications. In practice, almost all of that forcing comes
+from **negative constraints** (ruling cells out), not positive ones
+(placing a shape outright). A generator should treat these as the primary
+tool for guaranteeing a "logical", guess-free solve path, not merely as
+post-hoc validity checks run once a candidate solution already exists.
+
+The negative constraints available, all directly from the rules in §2:
+
+1. **No-touch exclusion zone.** Once a shape is (even partially) known or
+   deduced, every cell orthogonally *or* diagonally adjacent to it that
+   isn't part of that same shape must be unshaded (rule 2). This is the
+   single strongest deduction tool — it typically rules out far more
+   cells around a shape than the shape itself occupies.
+2. **Arrowed-distance exclusion.** For a clue with an arrow in some
+   direction, every cell strictly between the clue and the (eventual)
+   tied distance must be unshaded — if any of them were shaded, the ray
+   would stop short and the arrow would be pointing at the wrong
+   distance. This clears a whole line segment at once, not just one cell.
+3. **Unarrowed-direction exclusion.** For a clue's *unarrowed* directions,
+   no cell may be shaded at or before the arrowed tie distance (rule 3:
+   "directions without an arrow must have a shape further away, or not
+   have one at all") — another line-segment-wide exclusion.
+4. **Clue-cell exclusion.** A clue cell itself can never be shaded (rule
+   4, unless the transparent variant is in play) — trivial, but still a
+   hard exclusion a solver can rely on immediately.
+5. **Bank-exhaustion exclusion.** Once a shape from the bank has been
+   placed as many times as it's available (usually once), no *other*
+   region on the board may end up matching that same canonical shape —
+   ruling out an otherwise-plausible completion of a partially shaded
+   region.
+
+Positive information is comparatively rare and mostly derivative: a cell
+gets shaded only because it's forced to complete an already partly-known
+shape, or because it's the unique remaining candidate for an arrow's
+required hit at its tied distance. A generator that only checks "does
+this puzzle have a unique solution" (e.g. via brute-force/backtracking
+search) is not sufficient on its own — that guarantees a unique *answer*
+but not a guess-free *solve path*. To guarantee the latter, the generator
+(or a companion "human-solvability" checker) should confirm the puzzle can
+be fully solved by iterating constraints 1–5 above (plus shape-completion
+logic) to a fixed point, with no branching or backtracking ever required.
+
 ## Appendix A: Pentomino / tetromino catalog
 
 Decoded from the default bank presets in `statuepark.js` (`Bank.presets`),
