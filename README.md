@@ -8,7 +8,20 @@ See [`goal.md`](goal.md) for the high-level idea and current direction.
 
 ## Status
 
-Documentation and planning only so far — no implementation yet.
+All roadmap phases implemented: core library (puzz.link codec, shape
+canonicalization, validator), complete solver + human-style deduction
+engine, puzzle generator with difficulty control, and the web player UI
+(plain SVG, client-side only). Deployed to GitHub Pages on push to main.
+
+Quick start:
+
+```sh
+npm install
+npm run dev                                    # player UI
+npm test                                       # full suite
+npm run gen -- --cols 8 --rows 8 --seed 1 --difficulty medium
+npm run solve -- "https://puzz.link/p?pentopia/10/10/2s9ziar5gbi6z6hai9s4//p"
+```
 
 ## Docs
 

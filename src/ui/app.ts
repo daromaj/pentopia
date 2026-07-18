@@ -1,8 +1,10 @@
 import './styles.css';
 
 import { validate } from '../core/validator';
+import { decodeUrl } from '../core/codec/url';
 import type { Failure } from '../core/types';
 import { NO_CLUE } from '../core/types';
+import type { WorkerRequest, WorkerResponse } from '../generator/worker';
 import {
   createPlayState,
   loadPuzzle,
@@ -55,19 +57,34 @@ const hintCount = document.createElement('span');
 hintCount.className = 'hint-count';
 hintCount.dataset.hook = 'hint-count';
 
-// Mount point for the generator's "New puzzle" button. Deliberately
-// disabled and unwired — the lead wires this up to src/generator later.
-// TODO(lead): replace `disabled` with a click handler that calls the
-// generator and feeds the result through `loadPuzzle`/`onLoad`, once
-// src/generator/** lands.
+const sizeSelect = document.createElement('select');
+sizeSelect.dataset.hook = 'generate-size';
+sizeSelect.title = 'New puzzle size';
+for (const n of [6, 8, 10]) {
+  const opt = document.createElement('option');
+  opt.value = String(n);
+  opt.textContent = `${n}×${n}`;
+  sizeSelect.appendChild(opt);
+}
+sizeSelect.value = '8';
+
+const difficultySelect = document.createElement('select');
+difficultySelect.dataset.hook = 'generate-difficulty';
+difficultySelect.title = 'New puzzle difficulty';
+for (const d of ['easy', 'medium', 'hard']) {
+  const opt = document.createElement('option');
+  opt.value = d;
+  opt.textContent = d;
+  difficultySelect.appendChild(opt);
+}
+difficultySelect.value = 'medium';
+
 const generateBtn = document.createElement('button');
 generateBtn.type = 'button';
-generateBtn.textContent = 'Generate new puzzle';
-generateBtn.disabled = true;
+generateBtn.textContent = 'New puzzle';
 generateBtn.dataset.hook = 'generate-puzzle';
-generateBtn.title = 'Coming soon';
 
-actions.append(undoBtn, redoBtn, checkBtn, hintCount, generateBtn);
+actions.append(undoBtn, redoBtn, checkBtn, hintCount, sizeSelect, difficultySelect, generateBtn);
 toolbar.append(urlbarMount, actions);
 
 const banner = document.createElement('div');
@@ -193,6 +210,60 @@ checkBtn.addEventListener('click', () => {
     for (const c of f.cells ?? []) failureCells.add(c);
   }
   rerender();
+});
+
+// --- Generator wiring -----------------------------------------------------
+
+let generatorWorker: Worker | null = null;
+
+function showGenerateError(message: string): void {
+  banner.replaceChildren();
+  banner.classList.remove('banner-solved');
+  banner.classList.add('banner-fail');
+  banner.textContent = `Generation failed: ${message}`;
+  banner.hidden = false;
+}
+
+generateBtn.addEventListener('click', () => {
+  generatorWorker ??= new Worker(new URL('../generator/worker.ts', import.meta.url), {
+    type: 'module',
+  });
+  const worker = generatorWorker;
+
+  const size = parseInt(sizeSelect.value, 10);
+  const difficulty = difficultySelect.value as 'easy' | 'medium' | 'hard';
+  const seed = (Math.random() * 0xffffffff) >>> 0;
+
+  generateBtn.disabled = true;
+  generateBtn.textContent = 'Generating…';
+
+  worker.onmessage = (ev: MessageEvent<WorkerResponse>) => {
+    generateBtn.disabled = false;
+    generateBtn.textContent = 'New puzzle';
+    const msg = ev.data;
+    if (msg.type === 'error') {
+      showGenerateError(msg.message);
+      return;
+    }
+    try {
+      loadPuzzle(state, decodeUrl(msg.result.puzzleUrl));
+      lastFailures = [];
+      failureCells = null;
+      rerender();
+    } catch (e) {
+      showGenerateError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  worker.onerror = (ev) => {
+    generateBtn.disabled = false;
+    generateBtn.textContent = 'New puzzle';
+    showGenerateError(ev.message || 'worker error');
+  };
+
+  worker.postMessage({
+    type: 'generate',
+    opts: { cols: size, rows: size, seed, difficulty },
+  } satisfies WorkerRequest);
 });
 
 rerender();
