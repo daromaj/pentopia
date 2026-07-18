@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "gen": "tsx src/cli/generate.ts",
+    "solve": "tsx src/cli/solve.ts",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
