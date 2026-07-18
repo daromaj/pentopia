@@ -59,6 +59,24 @@ export interface ClueInfo {
    * cell at distance `d`.
    */
   readonly rays: ReadonlyMap<Dir, readonly number[]>;
+  /** Longest ray length over the four directions (sizes the mask arrays). */
+  readonly maxRayLen: number;
+  /**
+   * `nearerArrowedMask[t]` = the set of cells on this clue's *arrowed* rays at
+   * distances strictly less than `t` (i.e. 1..t-1). Static (depends only on the
+   * clue geometry). Used by the `clue-candidate` rule: a placement that hits any
+   * of these cells would give an arrowed ray a shaded cell *nearer* than the tie
+   * distance `t`, so it cannot be the placement realising the tie at `t`.
+   */
+  readonly nearerArrowedMask: readonly BitBoard[];
+  /**
+   * `leUnarrowedMask[t]` = the set of cells on this clue's *unarrowed* rays at
+   * distances ≤ `t` (i.e. 1..t). Static. Used by `clue-candidate`: a placement
+   * that hits any of these cells would give an unarrowed ray a shaded cell at
+   * distance ≤ the tie `t`, which rule 3 forbids (unarrowed must be strictly
+   * farther).
+   */
+  readonly leUnarrowedMask: readonly BitBoard[];
 }
 
 export interface Model {
@@ -72,6 +90,14 @@ export interface Model {
   readonly placementsCoveringCell: readonly (readonly number[])[];
   readonly clues: readonly ClueInfo[];
   readonly clueCellMask: BitBoard;
+  /**
+   * Union of every cell lying on any clue's ray (all four directions, all
+   * clues). Used only as a *heuristic* to prioritise probe candidates — cells
+   * on clue rays are where arrow reasoning bites, so probing them first tends
+   * to force a value (or a contradiction) sooner. Not load-bearing for
+   * soundness.
+   */
+  readonly clueRayMask: BitBoard;
 }
 
 function groupPieceTypes(puzzle: Puzzle): PieceType[] {
@@ -125,7 +151,52 @@ function buildClues(puzzle: Puzzle): ClueInfo[] {
       }
       rays.set(dir, ray);
     }
-    infos.push({ index: i, x, y, bitmask: v, arrowedDirs, unarrowedDirs, rays });
+
+    // Static per-clue masks for the clue-candidate rule (see ClueInfo above).
+    // Both are cumulative over distance, so build them incrementally.
+    let maxRayLen = 0;
+    for (const dir of DIRS) maxRayLen = Math.max(maxRayLen, rays.get(dir)!.length);
+    const nearerArrowedMask: BitBoard[] = [];
+    const leUnarrowedMask: BitBoard[] = [];
+    // Index by t in 0..maxRayLen. nearer[t] = arrowed cells at dist 1..t-1;
+    // leUnarrowed[t] = unarrowed cells at dist 1..t.
+    let nearerAcc = new BitBoard(cols, rows);
+    let leAcc = new BitBoard(cols, rows);
+    nearerArrowedMask[0] = nearerAcc.clone();
+    leUnarrowedMask[0] = leAcc.clone();
+    for (let t = 1; t <= maxRayLen; t++) {
+      // nearer[t] adds arrowed cells at distance t-1 (relative to nearer[t-1]).
+      nearerAcc = nearerAcc.clone();
+      if (t - 1 >= 1) {
+        for (const dir of arrowedDirs) {
+          const ray = rays.get(dir)!;
+          const c = ray[t - 2]; // distance t-1
+          if (c !== undefined) nearerAcc.set(c);
+        }
+      }
+      nearerArrowedMask[t] = nearerAcc;
+      // leUnarrowed[t] adds unarrowed cells at distance t.
+      leAcc = leAcc.clone();
+      for (const dir of unarrowedDirs) {
+        const ray = rays.get(dir)!;
+        const c = ray[t - 1]; // distance t
+        if (c !== undefined) leAcc.set(c);
+      }
+      leUnarrowedMask[t] = leAcc;
+    }
+
+    infos.push({
+      index: i,
+      x,
+      y,
+      bitmask: v,
+      arrowedDirs,
+      unarrowedDirs,
+      rays,
+      maxRayLen,
+      nearerArrowedMask,
+      leUnarrowedMask,
+    });
   }
   return infos;
 }
@@ -135,6 +206,9 @@ export function buildModel(puzzle: Puzzle): Model {
   const pieceTypes = groupPieceTypes(puzzle);
   const clueCellMask = buildClueCellMask(puzzle);
   const clues = buildClues(puzzle);
+
+  const clueRayMask = new BitBoard(cols, rows);
+  for (const clue of clues) for (const ray of clue.rays.values()) for (const c of ray) clueRayMask.set(c);
 
   const placements: Placement[] = [];
   const placementsByPiece: number[][] = pieceTypes.map(() => []);
@@ -184,5 +258,6 @@ export function buildModel(puzzle: Puzzle): Model {
     placementsCoveringCell,
     clues,
     clueCellMask,
+    clueRayMask,
   };
 }

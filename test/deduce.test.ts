@@ -212,6 +212,12 @@ describe('deduce: completion report on real boards', () => {
   it('§3.4 10x10 published sample', () => {
     report('§3.4-10x10', decodeUrl('pentopia/10/10/2s9ziar5gbi6z6hai9s4//p'));
   });
+  it('15x11 published benchmark (clue-candidate + depth-2 probing regression)', () => {
+    // Real published 15x11. Before clue-candidate + depth-2 probing, deduce()
+    // stalled at 100/165 unresolved; now it is guess-free. report() also asserts
+    // SOUNDNESS: every deduce-forced cell matches the unique solve() answer.
+    report('15x11-benchmark', decodeUrl('pentopia/15/11/h6i6i6i6u9i9i9i9zmczi4zm4i4i4i4u8i8i8i8h//p'));
+  }, 40_000);
 });
 
 // ── 4. Determinism ────────────────────────────────────────────────────────────
@@ -239,7 +245,9 @@ describe('deduce: TIER map', () => {
       'arrow-forced-shade': 3,
       'forced-placement': 4,
       'cover-analysis': 5,
+      'clue-candidate': 5,
       'probe-forcing': 6,
+      'probe-forcing-2': 7,
     });
   });
 });

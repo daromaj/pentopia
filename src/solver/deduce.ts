@@ -14,13 +14,15 @@
  * board. The keystone is the arrow ray-length cap (propagate.ts): every arrowed
  * ray must hit a shaded cell within the board, so the tie distance is bounded
  * above from an empty board, which lets ties pin and shades appear; those feed
- * cross-placement `cover-analysis`, the positive/negative rules, and finally
- * `probe-forcing` (failed-literal "what-if" analysis) in a loop until the board
- * is decided. `deduce()` remains sound — every cell it decides matches the
- * unique solution (a probe only forces a value whose negation a *sound*
- * propagator refuted),
+ * cross-placement `cover-analysis`, per-clue `clue-candidate` reasoning, the
+ * positive/negative rules, and finally `probe-forcing` (failed-literal "what-if"
+ * analysis, at depth 1 and then depth 2) in a loop until the board is decided.
+ * `deduce()` remains sound — every cell it decides matches the unique solution
+ * (a probe only forces a value whose negation a *sound* propagator refuted; a
+ * depth-2 probe's inner depth-1 propagation is sound by induction),
  * the property the generator relies on. All constraint logic lives in
- * propagate.ts; this file adds none (it only tiers the emitted steps).
+ * propagate.ts; this file adds none (it only tiers the emitted steps and bounds
+ * the wall-clock budget).
  */
 
 import type { Puzzle, Solution } from '../core/types';
@@ -60,7 +62,9 @@ export const TIER: Record<RuleId, number> = {
   'arrow-forced-shade': 3,
   'forced-placement': 4,
   'cover-analysis': 5,
+  'clue-candidate': 5,
   'probe-forcing': 6,
+  'probe-forcing-2': 7,
 };
 
 /**
@@ -79,9 +83,20 @@ function emptyHistogram(): Record<RuleId, number> {
     'arrow-forced-shade': 0,
     'forced-placement': 0,
     'cover-analysis': 0,
+    'clue-candidate': 0,
     'probe-forcing': 0,
+    'probe-forcing-2': 0,
   };
 }
+
+/**
+ * Wall-clock budget for a single `deduce()` call. deduce() is user-facing (the
+ * hint system re-runs it) and depth-2 probing is O(cells² × propagation), so we
+ * cap the work: past the budget, propagation stops escalating and returns what
+ * it has (deduce then reports `solved:false` if cells remain — never a wrong
+ * answer, since every forced cell was forced by a *sound* propagator).
+ */
+const DEDUCE_BUDGET_MS = 30_000;
 
 /**
  * Run the shared propagators once to a fixed point and report the outcome.
@@ -91,9 +106,16 @@ function emptyHistogram(): Record<RuleId, number> {
 export function deduce(puzzle: Puzzle): DeduceResult {
   const model = buildModel(puzzle);
   const state = initState(model);
-  // The deducer runs the full engine including the expensive `cover-analysis`
-  // and `probe-forcing` rules (search leaves probing off to stay fast).
-  const result = propagateToFixpoint(model, state, { coverAnalysis: true, probe: true });
+  // The deducer runs the full engine including the expensive `cover-analysis`,
+  // `clue-candidate`, and depth-2 `probe-forcing` rules (search leaves probing
+  // off — probeDepth 0 — to stay fast). A wall-clock deadline bounds the
+  // depth-2 sweeps so a hard board can't hang the hint UI.
+  const result = propagateToFixpoint(model, state, {
+    coverAnalysis: true,
+    clueCandidate: true,
+    probeDepth: 2,
+    deadline: performance.now() + DEDUCE_BUDGET_MS,
+  });
   const steps = result.steps;
 
   const tierHistogram = emptyHistogram();

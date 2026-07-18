@@ -141,22 +141,85 @@ describe('cover-analysis: common-halo exclusion', () => {
   });
 });
 
+// ── 4d. Clue-candidate: only two shapes satisfy a clue ⇒ shared cell + border ─
+describe('clue-candidate', () => {
+  it('forces the cell + border shared by every placement that can realise an arrow', () => {
+    // 4x4, single O-tetromino (2x2), clue at (0,0) arrowing DOWN. The Down ray is
+    // (0,1),(0,2),(0,3); the O that realises the tie hit is either the block at
+    // rows 1-2 (tie=1: cells {4,5,8,9}) or the block at rows 2-3 (tie=2: cells
+    // {8,9,12,13}) — exactly two shapes. BOTH cover (0,2)=8 and (1,2)=9 → those
+    // are forced shaded; BOTH keep the column-x=2 cells (2,1)=6, (2,2)=10,
+    // (2,3)=14 in their no-touch border → those are forced excluded. clue-candidate
+    // is the SOLE source of these five cells (arrow-distance/cover-analysis get
+    // different cells here — verified against a clue-candidate-off run).
+    const oTet: Bank = { pieces: [shapeFromStrings(['##', '##'])] };
+    const model = buildModel(mkPuzzle(4, 4, { [idx(0, 0, 4)]: dirBit(Dir.Down) }, oTet));
+    const st = initState(model);
+    const r = propagateToFixpoint(model, st, { coverAnalysis: true, clueCandidate: true, probeDepth: 0 });
+    expect(r.status).toBe('ok');
+    // Shared-cell forcing.
+    for (const c of [8, 9]) {
+      expect(st.shaded.test(c)).toBe(true);
+      expect(hasRule(r.steps, 'clue-candidate', c)).toBe(true);
+    }
+    // Common-border exclusion.
+    for (const c of [6, 10, 14]) {
+      expect(st.excluded.test(c)).toBe(true);
+      expect(hasRule(r.steps, 'clue-candidate', c)).toBe(true);
+    }
+    // The clue-candidate shade step and exclude step are distinct kinds.
+    expect(r.steps.some((s) => s.rule === 'clue-candidate' && s.kind === 'shade')).toBe(true);
+    expect(r.steps.some((s) => s.rule === 'clue-candidate' && s.kind === 'exclude')).toBe(true);
+  });
+});
+
 // ── 5. Probe-forcing is deducer-only and closes a real board ──────────────────
 describe('probe-forcing', () => {
   const url = 'pentopia/10/10/2s9ziar5gbi6z6hai9s4//p';
-  function unresolved(probe: boolean): number {
+  function unresolved(probeDepth: 0 | 1 | 2): number {
     const model = buildModel(decodeUrl(url));
     const st = initState(model);
-    propagateToFixpoint(model, st, { probe });
+    // Isolate probing's contribution: run WITHOUT the clue-candidate rule (which
+    // is itself strong enough to help close this board) so probeDepth is the
+    // only lever between the two assertions.
+    propagateToFixpoint(model, st, { probeDepth, clueCandidate: false });
     let u = 0;
     for (let i = 0; i < model.cols * model.rows; i++)
       if (!st.shaded.test(i) && !st.excluded.test(i)) u++;
     return u;
   }
   it('is OFF by default (search path) and leaves cells unresolved on the 10x10', () => {
-    expect(unresolved(false)).toBeGreaterThan(0);
+    expect(unresolved(0)).toBeGreaterThan(0);
   });
   it('resolves every cell on the 10x10 when enabled (deducer path)', () => {
-    expect(unresolved(true)).toBe(0);
+    expect(unresolved(1)).toBe(0);
   });
+});
+
+// ── 6. Depth-2 probing cracks a board depth-1 provably can't ──────────────────
+describe('probe-forcing-2 (depth-2)', () => {
+  // The 15x11 benchmark with clue-candidate DISABLED is a board that depth-1
+  // probing provably stalls on — isolating the probe DEPTH as the only lever.
+  const url = 'pentopia/15/11/h6i6i6i6u9i9i9i9zmczi4zm4i4i4i4u8i8i8i8h//p';
+  function run(probeDepth: 0 | 1 | 2): { unresolved: number; depth2Steps: number; status: string } {
+    const model = buildModel(decodeUrl(url));
+    const st = initState(model);
+    // clueCandidate OFF so the ONLY difference between the two runs is the depth.
+    const r = propagateToFixpoint(model, st, { coverAnalysis: true, clueCandidate: false, probeDepth });
+    let u = 0;
+    for (let i = 0; i < model.cols * model.rows; i++) if (!st.shaded.test(i) && !st.excluded.test(i)) u++;
+    let depth2Steps = 0;
+    for (const s of r.steps) if (s.rule === 'probe-forcing-2') depth2Steps += 1;
+    return { unresolved: u, depth2Steps, status: r.status };
+  }
+  it('depth-1 stalls but depth-2 resolves the whole board (and actually uses depth-2 steps)', () => {
+    const d1 = run(1);
+    expect(d1.status).toBe('ok');
+    expect(d1.unresolved).toBeGreaterThan(0); // depth-1 provably can't crack it
+
+    const d2 = run(2);
+    expect(d2.status).toBe('ok');
+    expect(d2.unresolved).toBe(0); // depth-2 finishes it
+    expect(d2.depth2Steps).toBeGreaterThanOrEqual(1); // a depth-2 force was decisive
+  }, 30_000);
 });

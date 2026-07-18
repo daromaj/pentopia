@@ -121,7 +121,14 @@ function buildStepMessage(step: Step, kind: 'shade' | 'exclude', primaryCell: nu
       return kind === 'shade'
         ? `Every possible piece covering a shaded cell also covers ${primary} — shade it.`
         : `No piece can reach ${primary} — mark it empty.`;
+    case 'clue-candidate': {
+      const clueRef = refFromDetail(step.detail, /clue (\d+)/, cols) ?? primary;
+      return kind === 'shade'
+        ? `Only a few pieces can satisfy the arrows at ${clueRef} — all of them cover ${primary}, so it must be shaded.`
+        : `Only a few pieces can satisfy the arrows at ${clueRef} — all of them leave ${primary} as empty border, so mark it empty.`;
+    }
     case 'probe-forcing':
+    case 'probe-forcing-2':
       return kind === 'exclude'
         ? `Try assuming ${primary} is shaded — it leads to a contradiction, so it must be empty.`
         : `Try assuming ${primary} stays empty — it leads to a contradiction, so it must be shaded.`;

@@ -21,6 +21,14 @@
  *    still-alive placements — zero-cover exclusion, common-cell forcing, and
  *    common-halo exclusion; see its block comment. This is the expensive rule,
  *    run only after the cheap rules saturate.
+ *  - clue-candidate        (§5, per-clue placement reasoning): for each arrow
+ *    clue, the placements that could realise each arrowed ray's tie hit are
+ *    limited; cells common to *all* of them are forced (shade the shared cells,
+ *    exclude the shared halo). See its block comment. Expensive ("outer ring").
+ *  - probe-forcing / probe-forcing-2 (deducer-only failed-literal analysis):
+ *    try a value for an undecided cell; if it forces a contradiction under sound
+ *    propagation, force the opposite. Depth-2 lets the inner propagation itself
+ *    probe (still sound, inductively). See their block comments.
  *
  * ─── ARROW-DISTANCE INFERENCE (roadmap risk #5) ──────────────────────────
  * For a clue let t be the (unknown) tie distance: every arrowed ray's nearest
@@ -70,7 +78,7 @@
  * ─────────────────────────────────────────────────────────────────────────
  */
 
-import type { Model } from './model';
+import type { ClueInfo, Model } from './model';
 import { Dir } from '../core/types';
 import { BitBoard } from './board';
 import { cloneState, commitPlacement, type SolveState } from './state';
@@ -97,7 +105,9 @@ export type RuleId =
   | 'placement-filtering'
   | 'forced-placement'
   | 'cover-analysis'
-  | 'probe-forcing';
+  | 'clue-candidate'
+  | 'probe-forcing'
+  | 'probe-forcing-2';
 
 export interface Step {
   readonly rule: RuleId;
@@ -127,16 +137,38 @@ export interface PropagateOptions {
    */
   readonly coverAnalysis?: boolean;
   /**
-   * Run the `probe-forcing` rule (failed-literal / "what-if" analysis; default
-   * `false`). For each undecided cell it tries both values and, if one leads to
-   * a contradiction, forces the other. This is the deducer's most powerful (and
-   * most expensive) tool — a human's "if this were shaded, that arrow/shape
-   * breaks, so it can't be" step. The complete SEARCH solver leaves it OFF (it
-   * already branches; probing at every node is pure overhead), so it is only
-   * ever enabled by `deduce()`. Probing recurses into `propagateToFixpoint` with
-   * `probe:false`, so there is no unbounded recursion.
+   * Run the per-clue `clue-candidate` rule (default `true`). Like
+   * `cover-analysis` it is an "outer ring" expensive rule enabled in both the
+   * deducer and the complete search (it prunes at every node and its steps
+   * carry difficulty signal). See {@link ruleClueCandidate}.
    */
-  readonly probe?: boolean;
+  readonly clueCandidate?: boolean;
+  /**
+   * Failed-literal probing depth (default `0` — the search path). For each
+   * undecided cell the rule tries each value and, if one leads to a
+   * contradiction, forces the other:
+   *  - `0`: no probing.
+   *  - `1`: probe with the inner propagation using every rule *except* probing
+   *    (`probe-forcing`). This is a human's "if this were shaded, that
+   *    arrow/shape breaks, so it can't be" step.
+   *  - `2`: probe with the inner propagation itself allowed to probe at depth 1
+   *    (`probe-forcing-2`). Sound by induction — the inner (depth-1) propagation
+   *    is sound, so an inner contradiction is real. Never recurses deeper than
+   *    the requested depth, so there is no unbounded recursion.
+   * Only the deducer raises this above 0 (search already branches; probing at
+   * every node is pure overhead). Subsumes the old `probe` boolean
+   * (`probe:true` ≡ `probeDepth:1`).
+   */
+  readonly probeDepth?: 0 | 1 | 2;
+  /**
+   * Optional wall-clock deadline (a `performance.now()` timestamp). The
+   * expensive probe loops check it and bail early once passed, so a caller
+   * (e.g. `deduce()`, which is user-facing via hints) can bound how long an
+   * O(cells² × propagation) depth-2 sweep runs. When the deadline trips,
+   * propagation returns `ok` with whatever it had already decided (never a
+   * spurious contradiction).
+   */
+  readonly deadline?: number;
 }
 
 /** Mutable bookkeeping threaded through one propagation run. */
@@ -146,6 +178,10 @@ interface Ctx {
   readonly steps: Step[];
   changed: boolean;
   contradiction: string | null;
+  /** Wall-clock deadline for the expensive probe loops (Infinity = none). */
+  readonly deadline: number;
+  /** Set once the deadline tripped, so the outer loop stops escalating. */
+  timedOut: boolean;
 }
 
 /** Exclude cell `c` if not already excluded; record the change. Returns true if newly set. */
@@ -192,69 +228,80 @@ function firstNonExcluded(state: SolveState, ray: readonly number[]): number {
   return Infinity;
 }
 
+interface TieBounds {
+  readonly lo: number;
+  readonly hi: number;
+  /** The feasible tie distances in [lo,hi] (non-excluded on every arrowed ray). */
+  readonly feasible: number[];
+}
+
+/**
+ * Compute the tie-distance bounds [lo,hi] and the feasible tie-distance set for
+ * one clue given the current shaded/excluded knowledge. This is the shared
+ * kernel of the ARROW-DISTANCE INFERENCE described in the block comment at the
+ * top of this file, factored out so both `arrow-distance-bounds` and
+ * `clue-candidate` reason over the *same* interval. Returns a contradiction
+ * reason string (instead of bounds) when the clue is already unsatisfiable.
+ */
+function computeTie(state: SolveState, clue: ClueInfo): TieBounds | { contradiction: string } {
+  let lo = 1;
+  let hi = Infinity;
+
+  // Bounds from arrowed rays. The `ray.length` term is the keystone RAY-LENGTH
+  // CAP: an arrowed direction must hit a shaded cell within the board and that
+  // hit is the tie, so t ≤ ray.length.
+  for (const dir of clue.arrowedDirs) {
+    const ray = clue.rays.get(dir)!;
+    const fne = firstNonExcluded(state, ray);
+    if (fne === Infinity) return { contradiction: `clue ${clue.index}: arrowed ray ${dirName(dir)} fully excluded` };
+    lo = Math.max(lo, fne);
+    hi = Math.min(hi, firstShaded(state, ray), ray.length);
+  }
+  // An unarrowed ray's shaded cell at distance d forces the tie strictly nearer.
+  for (const dir of clue.unarrowedDirs) {
+    const ray = clue.rays.get(dir)!;
+    const fs = firstShaded(state, ray);
+    if (fs !== Infinity) hi = Math.min(hi, fs - 1);
+  }
+  // The tie must be reachable on every arrowed ray (precise message; also
+  // implied by the ray-length cap above).
+  for (const dir of clue.arrowedDirs) {
+    const ray = clue.rays.get(dir)!;
+    if (lo > ray.length)
+      return { contradiction: `clue ${clue.index}: arrowed ray ${dirName(dir)} too short to reach tie distance ${lo}` };
+  }
+  if (lo > hi) return { contradiction: `clue ${clue.index}: tie-distance interval empty (lo=${lo} > hi=${hi})` };
+
+  // FEASIBLE-HIT INTERSECTION: t must be a distance whose cell is non-excluded
+  // on EVERY arrowed ray (that cell is the shaded tie). Collect those distances
+  // in [lo, hi]; t is one of them. (hi ≤ ray.length for every arrowed ray, so
+  // `ray[d-1]` is always defined here.)
+  const feasible: number[] = [];
+  for (let d = lo; d <= hi; d++) {
+    let ok = true;
+    for (const dir of clue.arrowedDirs) {
+      const ray = clue.rays.get(dir)!;
+      if (state.excluded.test(ray[d - 1]!)) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) feasible.push(d);
+  }
+  if (feasible.length === 0) return { contradiction: `clue ${clue.index}: no tie distance is non-excluded on every arrowed ray` };
+  // Tighten to the min/max of the intersection (sound: t lies in it).
+  return { lo: feasible[0]!, hi: feasible[feasible.length - 1]!, feasible };
+}
+
 function ruleArrowDistance(ctx: Ctx): void {
   const { model, state } = ctx;
   for (const clue of model.clues) {
-    let lo = 1;
-    let hi = Infinity;
-
-    // Bounds from arrowed rays. The `ray.length` term is the keystone RAY-LENGTH
-    // CAP: an arrowed direction must hit a shaded cell within the board and that
-    // hit is the tie, so t ≤ ray.length. This makes `hi` finite even from an
-    // empty board (nothing shaded), which is what lets a tie ever get pinned.
-    for (const dir of clue.arrowedDirs) {
-      const ray = clue.rays.get(dir)!;
-      const fne = firstNonExcluded(state, ray);
-      if (fne === Infinity) {
-        ctx.contradiction = `clue ${clue.index}: arrowed ray ${dirName(dir)} fully excluded`;
-        return;
-      }
-      lo = Math.max(lo, fne);
-      hi = Math.min(hi, firstShaded(state, ray), ray.length);
-    }
-    // An unarrowed ray's shaded cell at distance d forces the tie strictly nearer.
-    for (const dir of clue.unarrowedDirs) {
-      const ray = clue.rays.get(dir)!;
-      const fs = firstShaded(state, ray);
-      if (fs !== Infinity) hi = Math.min(hi, fs - 1);
-    }
-    // The tie must also be reachable on every arrowed ray (precise message; also
-    // implied by the ray-length cap above).
-    for (const dir of clue.arrowedDirs) {
-      const ray = clue.rays.get(dir)!;
-      if (lo > ray.length) {
-        ctx.contradiction = `clue ${clue.index}: arrowed ray ${dirName(dir)} too short to reach tie distance ${lo}`;
-        return;
-      }
-    }
-    if (lo > hi) {
-      ctx.contradiction = `clue ${clue.index}: tie-distance interval empty (lo=${lo} > hi=${hi})`;
+    const tie = computeTie(state, clue);
+    if ('contradiction' in tie) {
+      ctx.contradiction = tie.contradiction;
       return;
     }
-
-    // FEASIBLE-HIT INTERSECTION: t must be a distance whose cell is non-excluded
-    // on EVERY arrowed ray (that cell is the shaded tie). Collect those distances
-    // in [lo, hi]; t is one of them. (hi ≤ ray.length for every arrowed ray, so
-    // `ray[d-1]` is always defined here.)
-    const feasible: number[] = [];
-    for (let d = lo; d <= hi; d++) {
-      let ok = true;
-      for (const dir of clue.arrowedDirs) {
-        const ray = clue.rays.get(dir)!;
-        if (state.excluded.test(ray[d - 1]!)) {
-          ok = false;
-          break;
-        }
-      }
-      if (ok) feasible.push(d);
-    }
-    if (feasible.length === 0) {
-      ctx.contradiction = `clue ${clue.index}: no tie distance is non-excluded on every arrowed ray`;
-      return;
-    }
-    // Tighten to the min/max of the intersection (sound: t lies in it).
-    lo = feasible[0]!;
-    hi = feasible[feasible.length - 1]!;
+    const { lo, hi, feasible } = tie;
 
     // Exclusions.
     const excludedCells: number[] = [];
@@ -488,6 +535,171 @@ function ruleCoverAnalysis(ctx: Ctx): void {
 }
 
 /**
+ * Per-clue candidate-placement analysis (§5, the "reservation" deduction —
+ * TIER 5, the same league as cover-analysis).
+ *
+ * Fix an arrow clue with feasible tie interval [lo,hi] and feasible tie-distance
+ * set F (see `computeTie`). In any completion the clue has one tie distance
+ * t* ∈ F, and on each ARROWED ray the nearest shaded cell (at distance t*) is
+ * covered by exactly one used placement p*. That p* necessarily:
+ *   - is ALIVE *or already COMMITTED* — a used placement is either still a live
+ *     candidate (never hits `excluded`, never overlaps a committed placement,
+ *     piece not over-used) or one already placed. Note `alive` ALONE is NOT a
+ *     superset of "used": a committed placement has `alive = 0`, yet it is used,
+ *     and every still-alive placement covering one of its cells is killed by the
+ *     overlap filter — so a candidate set drawn from `alive` only would go empty
+ *     exactly where a ray's hit is already committed, a false contradiction. We
+ *     therefore draw candidates from `alive ∪ committed`; and
+ *   - covers the ray's cell at distance t*; and
+ *   - covers NO cell nearer than t* on ANY arrowed ray of this clue (else that
+ *     ray would have a shaded cell nearer than the tie); and
+ *   - covers NO cell at distance ≤ t* on ANY unarrowed ray (rule 3: unarrowed
+ *     directions must have their shape strictly farther than the tie).
+ * (For a non-transparent puzzle p* also cannot cover the clue cell — guaranteed
+ * at model build, where clue-covering placements are dropped. Transparent
+ * puzzles allow it, and none of the ray-distance conditions above reference the
+ * clue cell, so the analysis is sound in either mode.)
+ *
+ * So the CANDIDATE SET for an arrowed ray R — every (t, p) with t ∈ F, p alive
+ * or committed, p covering R's cell at distance t, and p passing the two mask tests
+ * (`cells ∩ nearerArrowedMask[t] = ∅` and `cells ∩ leUnarrowedMask[t] = ∅`) — is
+ * guaranteed to contain the real (t*, p*). Every derivation below is therefore
+ * sound (each holds for that real placement, hence in every completion):
+ *   - empty candidate set for a ray ⇒ no completion ⇒ contradiction;
+ *   - t* is a candidate t-value on EVERY arrowed ray, so it lies in their
+ *     intersection T; T = ∅ ⇒ contradiction. Restricting each ray's candidates
+ *     to t ∈ T keeps the real (t*, p*) (t* ∈ T);
+ *   - a cell covered by EVERY surviving candidate of ray R lies in p*.cells ⇒
+ *     force SHADE (when |T| = 1 the tie hit cell R[t] itself is such a cell and
+ *     falls out here automatically);
+ *   - a cell in the halo of EVERY surviving candidate lies in p*.halo, and a
+ *     used placement's no-touch halo is unshaded ⇒ force EXCLUDE (the user's
+ *     "common border" reservation).
+ *
+ * Note the intersections only ever *shrink* when spurious (not-actually-usable)
+ * placements sneak into the candidate set — so an over-broad candidate set can
+ * never force a wrong cell, only miss a right one. Cost is an "outer ring" rule
+ * run alongside cover-analysis, using the clue's precomputed static masks.
+ */
+function ruleClueCandidate(ctx: Ctx): void {
+  const { model, state } = ctx;
+  // Committed placements are "used" but have alive=0; candidates range over
+  // alive ∪ committed (see the block comment). committed lists are tiny.
+  const committedSet = new Set(state.committed);
+
+  for (const clue of model.clues) {
+    const tie = computeTie(state, clue);
+    if ('contradiction' in tie) {
+      ctx.contradiction = tie.contradiction;
+      return;
+    }
+    const { feasible } = tie;
+    const arrowed = clue.arrowedDirs;
+
+    // Pass 1: per arrowed ray, the alive placements (grouped by tie distance t)
+    // that could realise its tie hit, plus that ray's set of feasible t-values.
+    const perRay: Map<number, number[]>[] = [];
+    const tSets: Set<number>[] = [];
+    for (const dir of arrowed) {
+      const ray = clue.rays.get(dir)!;
+      const byT = new Map<number, number[]>();
+      const tSet = new Set<number>();
+      for (const t of feasible) {
+        const hit = ray[t - 1];
+        if (hit === undefined) continue; // t ≤ hi ≤ ray.length ⇒ defined; guard anyway
+        const nearer = clue.nearerArrowedMask[t]!;
+        const leUnarrowed = clue.leUnarrowedMask[t]!;
+        const list: number[] = [];
+        for (const p of model.placementsCoveringCell[hit]!) {
+          if (state.alive[p] !== 1 && !committedSet.has(p)) continue;
+          const pl = model.placements[p]!;
+          if (pl.cells.intersects(nearer)) continue; // would hit an arrowed ray nearer than t
+          if (pl.cells.intersects(leUnarrowed)) continue; // would tie/beat an unarrowed ray
+          list.push(p);
+        }
+        if (list.length > 0) {
+          byT.set(t, list);
+          tSet.add(t);
+        }
+      }
+      if (tSet.size === 0) {
+        ctx.contradiction = `clue ${clue.index}: arrowed ray ${dirName(dir)} has no candidate placement for any feasible tie`;
+        return;
+      }
+      perRay.push(byT);
+      tSets.push(tSet);
+    }
+
+    // Cross-ray tie intersection T: t* must be a candidate t on every arrowed ray.
+    let T: Set<number> | null = null;
+    for (const s of tSets) {
+      if (T === null) {
+        T = new Set(s);
+      } else {
+        for (const t of [...T]) if (!s.has(t)) T.delete(t);
+      }
+    }
+    if (T === null || T.size === 0) {
+      ctx.contradiction = `clue ${clue.index}: no tie distance is realisable on every arrowed ray at once`;
+      return;
+    }
+    const tInfo =
+      T.size === 1 ? `, tie pinned at ${[...T][0]}` : `, tie ∈ {${[...T].sort((a, b) => a - b).join(',')}}`;
+
+    // Pass 2: per arrowed ray, intersect cells / halos over candidates with t ∈ T.
+    for (let k = 0; k < arrowed.length; k++) {
+      const byT = perRay[k]!;
+      let interCells: BitBoard | null = null;
+      let interHalo: BitBoard | null = null;
+      let count = 0;
+      for (const t of T) {
+        const list = byT.get(t);
+        if (list === undefined) continue;
+        for (const p of list) {
+          const pl = model.placements[p]!;
+          count++;
+          if (interCells === null) {
+            interCells = pl.cells.clone();
+            interHalo = pl.halo.clone();
+          } else {
+            interCells.andAssign(pl.cells);
+            interHalo!.andAssign(pl.halo);
+          }
+        }
+      }
+      // `count === 0` is impossible: T ⊆ tSets[k], so byT has ≥1 candidate at some t ∈ T.
+      if (interCells === null) continue;
+      const dir = arrowed[k]!;
+      const shadeCells: number[] = [];
+      interCells.forEach((d) => {
+        if (shade(ctx, d)) shadeCells.push(d);
+      });
+      if (shadeCells.length > 0) {
+        ctx.steps.push({
+          rule: 'clue-candidate',
+          kind: 'shade',
+          cells: shadeCells,
+          detail: `clue ${clue.index}: ${count} candidate placement(s) for the ${dirName(dir)} ray${tInfo}`,
+        });
+      }
+      const exclCells: number[] = [];
+      interHalo!.forEach((d) => {
+        if (exclude(ctx, d)) exclCells.push(d);
+      });
+      if (exclCells.length > 0) {
+        ctx.steps.push({
+          rule: 'clue-candidate',
+          kind: 'exclude',
+          cells: exclCells,
+          detail: `clue ${clue.index}: common border of ${count} candidate placement(s) for the ${dirName(dir)} ray${tInfo}`,
+        });
+      }
+    }
+  }
+  checkShadedExcludedDisjoint(ctx);
+}
+
+/**
  * Failed-literal probing (a.k.a. "what-if" / singleton consistency). For each
  * still-undecided cell u, tentatively try each value and re-propagate (with the
  * cheap + cover rules, but NOT probing again — bounded recursion):
@@ -500,13 +712,72 @@ function ruleCoverAnalysis(ctx: Ctx): void {
  * clue can't be satisfied"), and it is what closes real published boards that
  * the local rules stall on. Expensive (two propagations per undecided cell), so
  * it runs only when the cheaper rules are saturated, and only in the deducer.
+ *
+ * `depth` selects how strong the inner propagation is:
+ *  - depth 1 (`probe-forcing`): the inner propagation runs every rule EXCEPT
+ *    probing. Full sweep over all undecided cells in natural order.
+ *  - depth 2 (`probe-forcing-2`): the inner propagation is itself allowed to
+ *    probe at depth 1. Sound by induction (the depth-1 propagation is sound, so
+ *    an inner contradiction is real). This is O(cells² × propagation), so it is
+ *    tightly cost-controlled: candidates are visited in a "near the action"
+ *    order, and it RETURNS as soon as it forces one cell — the caller then falls
+ *    back to the cheap fixpoint (and depth-1 probing) before the next depth-2
+ *    sweep, so the expensive work only runs when nothing cheaper can progress.
+ * Both honour `ctx.deadline`: once wall-clock passes it the sweep bails (setting
+ * `ctx.timedOut`) and propagation returns whatever it decided — never a spurious
+ * contradiction (a not-yet-found contradiction just means "no force here").
  */
-function ruleProbe(ctx: Ctx, coverAnalysis: boolean): void {
+interface ProbeInnerOpts {
+  readonly coverAnalysis: boolean;
+  readonly clueCandidate: boolean;
+}
+
+/** Undecided cells in natural (ascending) order. */
+function undecidedNatural(ctx: Ctx): number[] {
   const { model, state } = ctx;
   const n = model.cols * model.rows;
-  const inner: PropagateOptions = { coverAnalysis, probe: false };
+  const out: number[] = [];
+  for (let u = 0; u < n; u++) if (!state.shaded.test(u) && !state.excluded.test(u)) out.push(u);
+  return out;
+}
+
+/**
+ * Undecided cells ordered for depth-2 probing: cells adjacent to an
+ * already-decided cell, or lying on some clue's ray, come first — those are
+ * where a "what-if" is likeliest to cascade into a contradiction quickly. Pure
+ * heuristic (deterministic); it never affects soundness or the final fixpoint.
+ */
+function probeOrder(ctx: Ctx): number[] {
+  const { model, state } = ctx;
+  const n = model.cols * model.rows;
+  const decidedAdj = state.shaded.clone().orAssign(state.excluded).kingHalo();
+  const priority: number[] = [];
+  const rest: number[] = [];
   for (let u = 0; u < n; u++) {
     if (state.shaded.test(u) || state.excluded.test(u)) continue;
+    if (decidedAdj.test(u) || model.clueRayMask.test(u)) priority.push(u);
+    else rest.push(u);
+  }
+  return priority.concat(rest);
+}
+
+function ruleProbe(ctx: Ctx, opts: ProbeInnerOpts, depth: 1 | 2): void {
+  const { model, state } = ctx;
+  const ruleId: RuleId = depth === 2 ? 'probe-forcing-2' : 'probe-forcing';
+  const inner: PropagateOptions = {
+    coverAnalysis: opts.coverAnalysis,
+    clueCandidate: opts.clueCandidate,
+    probeDepth: (depth - 1) as 0 | 1,
+    deadline: ctx.deadline,
+  };
+  const cells = depth === 2 ? probeOrder(ctx) : undecidedNatural(ctx);
+  for (const u of cells) {
+    // A cell decided by an earlier force in this same sweep is no longer a probe.
+    if (state.shaded.test(u) || state.excluded.test(u)) continue;
+    if (performance.now() > ctx.deadline) {
+      ctx.timedOut = true;
+      return;
+    }
 
     const ifShaded = cloneState(state);
     ifShaded.shaded.set(u);
@@ -521,11 +792,15 @@ function ruleProbe(ctx: Ctx, coverAnalysis: boolean): void {
       return;
     }
     if (shadeContra) {
-      if (exclude(ctx, u))
-        ctx.steps.push({ rule: 'probe-forcing', kind: 'exclude', cells: [u], detail: `shading cell ${u} forces a contradiction` });
+      if (exclude(ctx, u)) {
+        ctx.steps.push({ rule: ruleId, kind: 'exclude', cells: [u], detail: `shading cell ${u} forces a contradiction (depth ${depth})` });
+        if (depth === 2) return; // fall back to the cheap fixpoint before more depth-2 work
+      }
     } else if (excludeContra) {
-      if (shade(ctx, u))
-        ctx.steps.push({ rule: 'probe-forcing', kind: 'shade', cells: [u], detail: `leaving cell ${u} unshaded forces a contradiction` });
+      if (shade(ctx, u)) {
+        ctx.steps.push({ rule: ruleId, kind: 'shade', cells: [u], detail: `leaving cell ${u} unshaded forces a contradiction (depth ${depth})` });
+        if (depth === 2) return;
+      }
     }
   }
   checkShadedExcludedDisjoint(ctx);
@@ -564,9 +839,14 @@ function cheapFixpoint(ctx: Ctx): void {
  * Structure (cheap → expensive, each only when the cheaper ones stall):
  *  1. cheap per-cell / per-placement rules to a fixed point;
  *  2. one `cover-analysis` pass — if it changed anything, go back to (1);
- *  3. otherwise, if probing is enabled, one `probe-forcing` sweep — if it
- *     changed anything, go back to (1).
- * This keeps the expensive rules off the hot inner loop and out of search.
+ *  3. otherwise one `clue-candidate` pass — if it changed anything, back to (1);
+ *  4. otherwise, if `probeDepth ≥ 1`, one depth-1 `probe-forcing` sweep — if it
+ *     changed anything, back to (1);
+ *  5. otherwise, if `probeDepth ≥ 2`, one depth-2 `probe-forcing-2` step (it
+ *     returns after a single force) — if it changed anything, back to (1).
+ * This keeps the expensive rules off the hot inner loop and out of search
+ * (which runs with `probeDepth: 0`), and only escalates to the pricier tool once
+ * every cheaper one has saturated.
  */
 export function propagateToFixpoint(
   model: Model,
@@ -574,8 +854,10 @@ export function propagateToFixpoint(
   opts?: PropagateOptions,
 ): PropagationResult {
   const coverAnalysis = opts?.coverAnalysis ?? true;
-  const probe = opts?.probe ?? false;
-  const ctx: Ctx = { model, state, steps: [], changed: false, contradiction: null };
+  const clueCandidate = opts?.clueCandidate ?? true;
+  const probeDepth = opts?.probeDepth ?? 0;
+  const deadline = opts?.deadline ?? Infinity;
+  const ctx: Ctx = { model, state, steps: [], changed: false, contradiction: null, deadline, timedOut: false };
 
   // Clue-cell exclusion is idempotent; apply it up front.
   ruleClueCellExclusion(ctx);
@@ -583,8 +865,9 @@ export function propagateToFixpoint(
   if (ctx.contradiction !== null)
     return { status: 'contradiction', steps: ctx.steps, reason: ctx.contradiction };
 
+  const innerOpts: ProbeInnerOpts = { coverAnalysis, clueCandidate };
   let outerChanged = true;
-  while (outerChanged && ctx.contradiction === null) {
+  while (outerChanged && ctx.contradiction === null && !ctx.timedOut) {
     outerChanged = false;
 
     cheapFixpoint(ctx);
@@ -596,14 +879,36 @@ export function propagateToFixpoint(
       if (ctx.contradiction !== null) break;
       if (ctx.changed) {
         outerChanged = true;
-        continue; // let the cheap rules digest the new cells before probing
+        continue; // let the cheap rules digest the new cells first
       }
     }
 
-    if (probe) {
+    if (clueCandidate) {
       ctx.changed = false;
-      ruleProbe(ctx, coverAnalysis);
+      ruleClueCandidate(ctx);
       if (ctx.contradiction !== null) break;
+      if (ctx.changed) {
+        outerChanged = true;
+        continue;
+      }
+    }
+
+    if (probeDepth >= 1) {
+      ctx.changed = false;
+      ruleProbe(ctx, innerOpts, 1);
+      if (ctx.contradiction !== null) break;
+      if (ctx.timedOut) break;
+      if (ctx.changed) {
+        outerChanged = true;
+        continue; // depth-2 only once depth-1 (and everything cheaper) saturates
+      }
+    }
+
+    if (probeDepth >= 2) {
+      ctx.changed = false;
+      ruleProbe(ctx, innerOpts, 2);
+      if (ctx.contradiction !== null) break;
+      if (ctx.timedOut) break;
       if (ctx.changed) outerChanged = true;
     }
   }

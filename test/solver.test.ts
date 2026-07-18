@@ -191,7 +191,10 @@ describe('propagators: arrow-distance inference in isolation', () => {
     const model = buildModel(puzzle);
     const st = initState(model);
     st.excluded.set(idx(2, 3, 5));
-    const r = propagateToFixpoint(model, st, { coverAnalysis: false });
+    // Disable BOTH cross-placement rules: with an empty bank, cover-analysis AND
+    // clue-candidate would each (soundly) collapse the unsatisfiable board to a
+    // contradiction. Disabling them isolates the pure arrow-distance behaviour.
+    const r = propagateToFixpoint(model, st, { coverAnalysis: false, clueCandidate: false });
     expect(r.status).toBe('ok');
     // Arrowed DOWN cell at d=1 (2,5) is < lo → excluded.
     expect(st.excluded.test(idx(2, 5, 5))).toBe(true);
@@ -222,8 +225,8 @@ describe('propagators: arrow-distance inference in isolation', () => {
     const model = buildModel(puzzle);
     const st = initState(model);
     // Isolate the clue-cell rule: an empty bank would otherwise let cover-analysis
-    // (soundly) turn this unsatisfiable board into a contradiction.
-    const r = propagateToFixpoint(model, st, { coverAnalysis: false });
+    // OR clue-candidate (soundly) turn this unsatisfiable board into a contradiction.
+    const r = propagateToFixpoint(model, st, { coverAnalysis: false, clueCandidate: false });
     expect(r.status).toBe('ok');
     expect(st.excluded.test(idx(2, 2, 5))).toBe(true);
   });
