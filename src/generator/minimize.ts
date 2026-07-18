@@ -56,8 +56,12 @@ export function minimizeClues(
     const candidate: Puzzle = { ...puzzle, clues };
 
     // Gate (a): uniquely solvable, and that unique solution is the answer.
+    // A capped search proves nothing — "found 1 so far" when the node cap
+    // cut the search short must never count as unique, or an ambiguous
+    // puzzle slips through the gate.
     const res = solve(candidate, { maxSolutions: 2, nodeCap });
-    let keep = res.solutions.length === 1 && sameSolution(res.solutions[0]!, answer);
+    let keep =
+      !res.capped && res.solutions.length === 1 && sameSolution(res.solutions[0]!, answer);
 
     // Gate (b): guess-free human-solvable, within the tier cap when specified.
     if (keep) {

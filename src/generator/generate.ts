@@ -124,7 +124,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     //    deduce-solve within the difficulty cap. If even the fullest clue set
     //    overshoots the ceiling, this layout is hopeless — new layout.
     const maxSolve = solve(maxPuzzle, { maxSolutions: 2, nodeCap: NODE_CAP });
-    if (maxSolve.solutions.length !== 1 || !sameSolution(maxSolve.solutions[0]!, answer)) continue;
+    if (maxSolve.capped || maxSolve.solutions.length !== 1 || !sameSolution(maxSolve.solutions[0]!, answer)) continue;
     const maxDed = deduce(maxPuzzle);
     if (!maxDed.solved || maxDed.maxTier > gateTier) continue;
 
@@ -139,12 +139,12 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     // 6. Full AC verification.
     if (!validate(puzzle, answer).ok) continue;
     const finalSolve = solve(puzzle, { maxSolutions: 2, nodeCap: NODE_CAP });
-    if (finalSolve.solutions.length !== 1 || !sameSolution(finalSolve.solutions[0]!, answer)) continue;
+    if (finalSolve.capped || finalSolve.solutions.length !== 1 || !sameSolution(finalSolve.solutions[0]!, answer)) continue;
 
     const url = encodeUrl(puzzle);
     const reDecoded = decodeUrl(url);
     const reSolve = solve(reDecoded, { maxSolutions: 2, nodeCap: NODE_CAP });
-    if (reSolve.solutions.length !== 1 || !sameSolution(reSolve.solutions[0]!, answer)) continue;
+    if (reSolve.capped || reSolve.solutions.length !== 1 || !sameSolution(reSolve.solutions[0]!, answer)) continue;
 
     return {
       puzzle,
