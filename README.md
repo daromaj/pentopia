@@ -8,7 +8,7 @@ See [`goal.md`](goal.md) for the high-level idea and current direction.
 
 ## Status
 
-Documentation-only so far — no implementation yet.
+Documentation and planning only so far — no implementation yet.
 
 ## Docs
 
@@ -16,3 +16,7 @@ Documentation-only so far — no implementation yet.
   Pentopia's rules, the puzz.link URL/file encoding format, and the
   reference validator logic, reverse-engineered from the
   [pzprjs](https://github.com/robx/pzprjs) reference implementation.
+- [`docs/roadmap.md`](docs/roadmap.md) — the implementation roadmap:
+  architecture, tech stack, phased milestones with acceptance criteria
+  and per-task owner assignments, solver/generator design, testing
+  strategy, and risks.
