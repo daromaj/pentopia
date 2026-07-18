@@ -11,8 +11,15 @@ Build a small, free-to-run web project around the **Pentopia** puzzle:
   (shade cells, place shapes, get validated against the rules).
 
 All three should speak the same puzzle representation, based on the
-puz­z.link/pzprjs encoding, so puzzles can be freely exchanged between them,
-shared as puz­z.link-style URLs, and opened in the actual puzz.link player.
+puzz.link/pzprjs encoding, so puzzles can be freely exchanged between them,
+shared as puzz.link-style URLs, and opened in the actual puzz.link player.
+
+## Scope
+
+First focus is the **classic variant**: the default pentomino bank (one
+of each of the 12 free pentominoes), standard arrow clues, no
+transparent-mode overlap. The tetromino/double-tetromino bank presets and
+other variants can follow once that's solid.
 
 ## Reference material already captured
 
@@ -22,7 +29,7 @@ written up in
 
 - The Pentopia rules, in both the canonical puzz.link wording and a
   solver-friendly restatement.
-- The puz­z.link URL/file encoding (board size, arrow-clue grid, shape
+- The puzz.link URL/file encoding (board size, arrow-clue grid, shape
   bank, orientation matching), derived from the pzprjs reference
   implementation.
 - The reference validator's logic and failure conditions, cross-checked
@@ -30,7 +37,7 @@ written up in
 
 This exists so the generator/solver/player can target the real format
 directly, and so generated puzzles can be validated against the same rules
-puz­z.link itself uses.
+puzz.link itself uses.
 
 ## Hosting idea
 
