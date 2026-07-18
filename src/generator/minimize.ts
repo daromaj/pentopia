@@ -27,6 +27,16 @@ export interface MinimizeGates {
   readonly maxTier?: number;
   /** `nodeCap` handed to every internal `solve()` call (bounds worst case). Default 200_000. */
   readonly nodeCap?: number;
+  /**
+   * A `performance.now()` timestamp. Checked before each candidate removal;
+   * once passed, minimize stops removing clues and returns the puzzle as it
+   * stands (partially minimized clue sets still pass the caller's floor
+   * check — they just carry a few more clues than a fully-minimized run
+   * would). Exists because depth-2 `probe-forcing-2` deduce() calls are
+   * O(cells² × propagation) and are exactly the hot path when `maxTier`
+   * allows tier 7 (expert). Default: unbounded (no deadline).
+   */
+  readonly deadline?: number;
 }
 
 function sameSolution(a: Solution, b: Solution): boolean {
@@ -51,6 +61,8 @@ export function minimizeClues(
   shuffle(positions, rng);
 
   for (const pos of positions) {
+    if (gates.deadline !== undefined && performance.now() > gates.deadline) break;
+
     const saved = clues[pos]!;
     clues[pos] = NO_CLUE;
     const candidate: Puzzle = { ...puzzle, clues };

@@ -37,8 +37,8 @@ function parseArgs(argv: string[]): Args {
         i++;
         break;
       case '--difficulty':
-        if (val !== 'easy' && val !== 'medium' && val !== 'hard') {
-          throw new Error(`--difficulty must be easy|medium|hard, got "${val}"`);
+        if (val !== 'easy' && val !== 'medium' && val !== 'hard' && val !== 'expert') {
+          throw new Error(`--difficulty must be easy|medium|hard|expert, got "${val}"`);
         }
         args.difficulty = val;
         i++;

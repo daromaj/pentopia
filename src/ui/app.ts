@@ -100,7 +100,7 @@ sizeSelect.value = '8';
 const difficultySelect = document.createElement('select');
 difficultySelect.dataset.hook = 'generate-difficulty';
 difficultySelect.title = 'New puzzle difficulty';
-for (const d of ['easy', 'medium', 'hard']) {
+for (const d of ['easy', 'medium', 'hard', 'expert']) {
   const opt = document.createElement('option');
   opt.value = d;
   opt.textContent = d;
@@ -367,7 +367,7 @@ generateBtn.addEventListener('click', () => {
   const worker = generatorWorker;
 
   const size = parseInt(sizeSelect.value, 10);
-  const difficulty = difficultySelect.value as 'easy' | 'medium' | 'hard';
+  const difficulty = difficultySelect.value as 'easy' | 'medium' | 'hard' | 'expert';
   const seed = (Math.random() * 0xffffffff) >>> 0;
 
   generateBtn.disabled = true;

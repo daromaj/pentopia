@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { generatePuzzle } from '@generator/generate';
+import { generatePuzzle, expertProbeFloor } from '@generator/generate';
 import { deriveMaximalClues } from '@generator/clues';
 import { solve } from '@solver/search';
 import { deduce } from '@solver/deduce';
@@ -94,6 +94,49 @@ describe('generator: difficulty knob', () => {
     console.log(
       `[difficulty knob 6x6] easy: clues=${easy.stats.clueCount} maxTier=${easy.stats.maxTier} probes=${easy.stats.tierHistogram['probe-forcing']} | ` +
         `hard: clues=${hard.stats.clueCount} maxTier=${hard.stats.maxTier} probes=${hard.stats.tierHistogram['probe-forcing']}`,
+    );
+  });
+});
+
+describe('generator: expert difficulty', () => {
+  // Seeds hand-verified (experiments/tune-expert-floor.ts + ad-hoc sweeps) to
+  // generate an 8x8 expert puzzle in well under 3s each with today's defaults
+  // (maxAttempts=400, timeBudgetMs=20000) — expert's floor is a deliberate
+  // tail event (see generate.ts's expertProbeFloor doc comment), so most
+  // seeds work but some take much longer or time out; these three don't.
+  const fastSeeds = [5, 8, 11];
+
+  for (const seed of fastSeeds) {
+    it(`8x8 expert seed ${seed} satisfies all AC + the expert floor`, () => {
+      const t0 = performance.now();
+      const { puzzle, answer, stats } = generatePuzzle({ cols: 8, rows: 8, seed, difficulty: 'expert' });
+      const elapsed = performance.now() - t0;
+
+      assertAcceptanceCriteria(puzzle, answer, 7);
+
+      const floor = expertProbeFloor(8, 8);
+      const floorMet = stats.tierHistogram['probe-forcing-2'] >= 1 || stats.tierHistogram['probe-forcing'] >= floor;
+      expect(floorMet).toBe(true);
+
+      console.log(
+        `[expert 8x8 seed ${seed}] elapsed=${elapsed.toFixed(0)}ms attempts=${stats.attempts} ` +
+          `clues=${stats.clueCount} maxTier=${stats.maxTier} probe-forcing=${stats.tierHistogram['probe-forcing']} ` +
+          `probe-forcing-2=${stats.tierHistogram['probe-forcing-2']} floor=${floor}`,
+      );
+    });
+  }
+
+  it('expert has strictly more probe-forcing steps than easy at the same size (seed 5)', () => {
+    const easy = generatePuzzle({ cols: 8, rows: 8, seed: 5, difficulty: 'easy' });
+    const expert = generatePuzzle({ cols: 8, rows: 8, seed: 5, difficulty: 'expert' });
+
+    // Easy's ceiling (maxTier<=4) excludes probing entirely.
+    expect(easy.stats.tierHistogram['probe-forcing']).toBe(0);
+    expect(expert.stats.tierHistogram['probe-forcing']).toBeGreaterThan(easy.stats.tierHistogram['probe-forcing']);
+
+    console.log(
+      `[difficulty ordering 8x8 seed 5] easy: probes=${easy.stats.tierHistogram['probe-forcing']} maxTier=${easy.stats.maxTier} | ` +
+        `expert: probes=${expert.stats.tierHistogram['probe-forcing']} maxTier=${expert.stats.maxTier}`,
     );
   });
 });
