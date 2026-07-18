@@ -28,14 +28,14 @@
     --cell-clue-bg: #2c2e33;
     --cell-shaded: #e9e9e6;
     --cell-marked: #8a8d96;
-    --arrow: #101114;
+    --arrow: #e9e9e6;
     --accent: #5b9bd5;
     --accent-fg: #101114;
     --solved-bg: #2f9e57;
     --solved-fg: #08120a;
     --fail-bg: #d9605f;
     --fail-fg: #180404;
-    --failure-cell: #5c2a2a;
+    --failure-cell: #ff6b6b;
     --bank-exhausted: #45474d;
   }
 }
@@ -229,8 +229,17 @@ button:disabled {
   fill: var(--cell-marked);
 }
 
+/* Drawn in its own layer *after* every cell fill (see render.ts), so a
+   flagged clue or shaded cell still reads clearly: a semi-transparent tint
+   (doesn't fully hide the arrow/shading underneath) plus a bold inset
+   outline in the failure color for an unmistakable "this one" marker. */
 .cell-failure {
   fill: var(--failure-cell);
+  fill-opacity: 0.4;
+  stroke: var(--failure-cell);
+  stroke-width: 4;
+  stroke-opacity: 0.95;
+  paint-order: stroke;
 }
 
 .clue-arrow {

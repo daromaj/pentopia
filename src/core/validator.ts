@@ -14,7 +14,7 @@
 
 import type { Bank, Failure, Puzzle, Shape, Solution, ValidationResult } from './types';
 import { DIRS, Dir, dirBit } from './types';
-import { idx, rayDistance, ORTH4 } from './grid';
+import { idx, rayDistance, dirDelta, ORTH4 } from './grid';
 import { canonicalKey } from './shape';
 import { bankCounts } from './bank';
 
@@ -138,6 +138,8 @@ function checkShDiag(puzzle: Puzzle, answer: Solution, componentOf: Int32Array):
 interface ClueRayInfo {
   readonly clueIndex: number;
   readonly dist: ReadonlyMap<Dir, number | null>;
+  /** Index of the first shaded cell hit by the ray in each direction (null if the ray hit nothing). */
+  readonly hitCell: ReadonlyMap<Dir, number | null>;
   readonly arrowedDirs: readonly Dir[];
   readonly unarrowedDirs: readonly Dir[];
 }
@@ -152,15 +154,22 @@ function measureClueRays(puzzle: Puzzle, answer: Solution): ClueRayInfo[] {
     const x = i % cols;
     const y = Math.floor(i / cols);
     const dist = new Map<Dir, number | null>();
+    const hitCell = new Map<Dir, number | null>();
     const arrowedDirs: Dir[] = [];
     const unarrowedDirs: Dir[] = [];
     for (const dir of DIRS) {
       const d = rayDistance(x, y, dir, cols, rows, (ci) => shaded[ci] === 1);
       dist.set(dir, d);
+      if (d === null) {
+        hitCell.set(dir, null);
+      } else {
+        const [dx, dy] = dirDelta(dir);
+        hitCell.set(dir, idx(x + dx * d, y + dy * d, cols));
+      }
       if ((v & dirBit(dir)) !== 0) arrowedDirs.push(dir);
       else unarrowedDirs.push(dir);
     }
-    infos.push({ clueIndex: i, dist, arrowedDirs, unarrowedDirs });
+    infos.push({ clueIndex: i, dist, hitCell, arrowedDirs, unarrowedDirs });
   }
   return infos;
 }
@@ -178,37 +187,72 @@ function measureClueRays(puzzle: Puzzle, answer: Solution): ClueRayInfo[] {
  * rule 3 forbids regardless of whether the arrows also disagree among
  * themselves.
  */
+/**
+ * Cells implicated by a check are accumulated as a plain array (not a
+ * globally-sorted Set) so each clue's own cell is pushed immediately before
+ * the offending cells it pulled in — the clue cell leads, per-clue, rather
+ * than getting reordered behind a numerically-smaller offender from another
+ * clue elsewhere on the board.
+ */
 function checkArDistanceGt(infos: readonly ClueRayInfo[]): Failure | null {
-  const cells = new Set<number>();
+  const cells: number[] = [];
+  const seen = new Set<number>();
+  const push = (i: number): void => {
+    if (!seen.has(i)) {
+      seen.add(i);
+      cells.push(i);
+    }
+  };
   for (const info of infos) {
     const arrowedHits = info.arrowedDirs
       .map((d) => info.dist.get(d)!)
       .filter((d): d is number => d !== null);
     if (arrowedHits.length === 0) continue;
     const minArrowed = Math.min(...arrowedHits);
+    // Every unarrowed ray whose first shaded cell ties-or-beats the nearest
+    // arrowed hit is an offender: its shaded cell is "too close" per rule 3.
+    const offenders: number[] = [];
     for (const dir of info.unarrowedDirs) {
       const d = info.dist.get(dir)!;
       if (d !== null && d <= minArrowed) {
-        cells.add(info.clueIndex);
+        const hit = info.hitCell.get(dir);
+        if (hit !== null && hit !== undefined) offenders.push(hit);
       }
     }
+    if (offenders.length > 0) {
+      push(info.clueIndex);
+      for (const o of offenders.sort((a, b) => a - b)) push(o);
+    }
   }
-  return cells.size > 0 ? { code: 'arDistanceGt', cells: [...cells].sort((a, b) => a - b) } : null;
+  return cells.length > 0 ? { code: 'arDistanceGt', cells } : null;
 }
 
 function checkArDistanceNe(infos: readonly ClueRayInfo[]): Failure | null {
-  const cells = new Set<number>();
+  const cells: number[] = [];
+  const seen = new Set<number>();
+  const push = (i: number): void => {
+    if (!seen.has(i)) {
+      seen.add(i);
+      cells.push(i);
+    }
+  };
   for (const info of infos) {
-    const arrowedHits = info.arrowedDirs
-      .map((d) => info.dist.get(d)!)
-      .filter((d): d is number => d !== null);
+    const arrowedHitDirs = info.arrowedDirs.filter((d) => info.dist.get(d) !== null);
+    const arrowedHits = arrowedHitDirs.map((d) => info.dist.get(d)!);
     if (arrowedHits.length < 2) continue;
     const first = arrowedHits[0]!;
     if (arrowedHits.some((d) => d !== first)) {
-      cells.add(info.clueIndex);
+      push(info.clueIndex);
+      // Every arrowed ray that hit disagrees on distance (that's the whole
+      // point of arDistanceNe) — surface all of their hit cells, tied or not.
+      const offenders = arrowedHitDirs
+        .map((d) => info.hitCell.get(d))
+        .filter((h): h is number => h !== null && h !== undefined)
+        .sort((a, b) => a - b);
+      for (const o of offenders) push(o);
     }
   }
-  return cells.size > 0 ? { code: 'arDistanceNe', cells: [...cells].sort((a, b) => a - b) } : null;
+  return cells.length > 0 ? { code: 'arDistanceNe', cells } : null;
 }
 
 function checkArNoShade(infos: readonly ClueRayInfo[]): Failure | null {

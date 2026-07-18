@@ -151,6 +151,49 @@ describe('bankInvalid (format §4, item 7)', () => {
   });
 });
 
+describe('enriched Failure.cells for arrow checks (clue cell first, then offenders)', () => {
+  it('arDistanceGt: cells include the too-close shaded cell on the unarrowed ray', () => {
+    // Clue at (3,3), value 8 = RIGHT arrow only. RIGHT hits a shaded cell at
+    // distance 2 (5,3). The unarrowed UP ray hits a shaded cell at distance
+    // 1 (3,2) — strictly closer than the arrow, the arDistanceGt offender.
+    const clueRows = ['.......', '.......', '.......', '...8...', '.......', '.......', '.......'];
+    const answerRows = ['.......', '.......', '...#...', '.....#.', '.......', '.......', '.......'];
+    const { puzzle, answer } = buildBoard(clueRows, answerRows, PRESETS.p!);
+    const result = validate(puzzle, answer);
+    const failure = result.failures.find((f) => f.code === 'arDistanceGt');
+    expect(failure).toBeDefined();
+    const clueIndex = idx(3, 3, 7);
+    const offenderIndex = idx(3, 2, 7); // the too-close shaded cell on the unarrowed UP ray
+    expect(failure!.cells).toEqual([clueIndex, offenderIndex]);
+  });
+
+  it('arDistanceNe: cells include every arrowed ray hit cell that disagrees', () => {
+    // Clue at (3,3), value 3 = UP+DOWN. UP hits a shaded cell at distance 1
+    // (3,2); DOWN hits a shaded cell at distance 3 (3,6) — the two arrowed
+    // hits disagree, so both hit cells are offenders.
+    const clueRows = ['.......', '.......', '.......', '...3...', '.......', '.......', '.......'];
+    const answerRows = ['.......', '.......', '...#...', '.......', '.......', '.......', '...#...'];
+    const { puzzle, answer } = buildBoard(clueRows, answerRows, PRESETS.p!);
+    const result = validate(puzzle, answer);
+    const failure = result.failures.find((f) => f.code === 'arDistanceNe');
+    expect(failure).toBeDefined();
+    const clueIndex = idx(3, 3, 7);
+    const upHit = idx(3, 2, 7);
+    const downHit = idx(3, 6, 7);
+    expect(failure!.cells).toEqual([clueIndex, upHit, downHit]);
+  });
+
+  it('arNoShade: cells remain just the clue cell (no identifiable offending cell)', () => {
+    const clueRows = ['.......', '.......', '.......', '...1...', '.......', '.......', '.......'];
+    const answerRows = ['.......', '.......', '.......', '.......', '.......', '.......', '.......'];
+    const { puzzle, answer } = buildBoard(clueRows, answerRows, PRESETS.p!);
+    const result = validate(puzzle, answer);
+    const failure = result.failures.find((f) => f.code === 'arNoShade');
+    expect(failure).toBeDefined();
+    expect(failure!.cells).toEqual([idx(3, 3, 7)]);
+  });
+});
+
 describe('csOnArrow / transparent (format §2.1, §4 item 1)', () => {
   it('a shaded clue cell is csOnArrow when not transparent', () => {
     const { puzzle, answer } = buildBoard(['.', '1'], ['.', '#'], PRESETS.z!);

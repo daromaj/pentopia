@@ -79,10 +79,6 @@ export function renderBoard(host: HTMLElement, state: PlayState, opts: RenderOpt
       const cx = x * CELL;
       const cy = y * CELL;
 
-      if (failureCells?.has(i)) {
-        svg.appendChild(svgEl('rect', { x: cx, y: cy, width: CELL, height: CELL, class: 'cell-failure' }));
-      }
-
       if (clue !== NO_CLUE) {
         svg.appendChild(svgEl('rect', { x: cx, y: cy, width: CELL, height: CELL, class: 'cell-clue' }));
         const ccx = cx + CELL / 2;
@@ -113,6 +109,30 @@ export function renderBoard(host: HTMLElement, state: PlayState, opts: RenderOpt
         );
       }
     }
+  }
+
+  // Failure highlights, drawn in their own layer *after* every cell fill
+  // (clue/shaded/marked) so an implicated clue or shaded cell is still
+  // clearly flagged instead of having its highlight painted underneath the
+  // fill. A semi-transparent tint plus a bold outline keeps the underlying
+  // arrow/shading legible while making the offending cell unmistakable.
+  if (failureCells && failureCells.size > 0) {
+    const failureLayer = svgEl('g', { class: 'failure-layer' });
+    const inset = CELL * 0.05; // keeps the bold outline stroke inside the cell, not bleeding onto neighbors
+    for (const i of failureCells) {
+      const x = i % cols;
+      const y = Math.floor(i / cols);
+      failureLayer.appendChild(
+        svgEl('rect', {
+          x: x * CELL + inset,
+          y: y * CELL + inset,
+          width: CELL - inset * 2,
+          height: CELL - inset * 2,
+          class: 'cell-failure',
+        }),
+      );
+    }
+    svg.appendChild(failureLayer);
   }
 
   // Grid lines, drawn last so they sit crisply above cell fills.
