@@ -13,6 +13,7 @@ import {
   redo,
   FAILCODE_MESSAGES,
   SHADED,
+  UNTOUCHED,
 } from './state';
 import type { PlayState } from './state';
 import { renderBoard, renderBank } from './render';
@@ -371,10 +372,13 @@ function updateBanner(solved: boolean): void {
     banner.hidden = false;
     return;
   }
-  // Lowest priority: the standing challenge from a shared link, shown while
-  // its puzzle is loaded and there's nothing more urgent to say.
+  // Lowest priority: the standing challenge from a shared link — but only
+  // while the board is still untouched. The banner overlays the grid, so it
+  // gets out of the way the moment solving starts (the solved dialog brings
+  // the head-to-head back at the end).
   const challenge = challengeForCurrentPuzzle();
-  if (challenge) {
+  const boardUntouched = !state.cellState.some((v) => v !== UNTOUCHED);
+  if (challenge && boardUntouched) {
     banner.classList.add('banner-challenge');
     banner.textContent =
       `🏁 ${challenge.name} solved this in ${formatTime(challenge.timeMs)} — can you beat it?` +
