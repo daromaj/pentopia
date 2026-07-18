@@ -16,6 +16,8 @@ import {
 } from './state';
 import type { PlayState } from './state';
 import { renderBoard, renderBank } from './render';
+import { computeHint } from './hint';
+import type { Hint } from './hint';
 import { attachBoardInteraction, attachKeyboardShortcuts } from './interaction';
 import {
   createUrlBar,
@@ -62,6 +64,12 @@ checkBtn.type = 'button';
 checkBtn.textContent = 'Check';
 checkBtn.dataset.hook = 'check-btn';
 
+const hintBtn = document.createElement('button');
+hintBtn.type = 'button';
+hintBtn.textContent = 'Hint';
+hintBtn.title = 'Learning mode: highlight one next step and explain it (never applies it for you)';
+hintBtn.dataset.hook = 'hint-btn';
+
 const resetBtn = document.createElement('button');
 resetBtn.type = 'button';
 resetBtn.textContent = 'Reset';
@@ -74,9 +82,9 @@ favoriteBtn.className = 'favorite-btn';
 favoriteBtn.title = 'Favorite this puzzle';
 favoriteBtn.dataset.hook = 'favorite-btn';
 
-const hintCount = document.createElement('span');
-hintCount.className = 'hint-count';
-hintCount.dataset.hook = 'hint-count';
+const clueCount = document.createElement('span');
+clueCount.className = 'clue-count';
+clueCount.dataset.hook = 'clue-count';
 
 const sizeSelect = document.createElement('select');
 sizeSelect.dataset.hook = 'generate-size';
@@ -105,7 +113,7 @@ generateBtn.type = 'button';
 generateBtn.textContent = 'New puzzle';
 generateBtn.dataset.hook = 'generate-puzzle';
 
-actions.append(undoBtn, redoBtn, checkBtn, resetBtn, hintCount, sizeSelect, difficultySelect, generateBtn);
+actions.append(undoBtn, redoBtn, checkBtn, hintBtn, resetBtn, clueCount, sizeSelect, difficultySelect, generateBtn);
 toolbar.append(urlbarMount, actions);
 
 const banner = document.createElement('div');
@@ -159,6 +167,8 @@ function resolveStartupPuzzle(): Puzzle {
 const state: PlayState = createPlayState(resolveStartupPuzzle());
 let lastFailures: readonly Failure[] = [];
 let failureCells: Set<number> | null = null;
+/** Last "Hint" result — highlight + banner persist until the next board edit (same lifecycle as `failureCells`/`lastFailures`). Learning mode never applies this for the player; it's display-only. */
+let currentHint: Hint | null = null;
 
 /**
  * Overwrite `state.cellState` with any saved progress for puzzle `key`
@@ -185,6 +195,7 @@ function loadPuzzleAndRestore(puzzle: Puzzle): void {
   restoreProgress(encodeUrl(state.puzzle));
   lastFailures = [];
   failureCells = null;
+  currentHint = null;
   rerender();
 }
 
@@ -235,10 +246,20 @@ function isSolved(): boolean {
 
 function updateBanner(solved: boolean): void {
   banner.replaceChildren();
-  banner.classList.remove('banner-solved', 'banner-fail');
+  banner.classList.remove('banner-solved', 'banner-fail', 'banner-hint');
   if (solved) {
     banner.classList.add('banner-solved');
     banner.textContent = 'Solved!';
+    banner.hidden = false;
+    return;
+  }
+  // A hint (when present) takes priority over a stale "Check" result — it's
+  // the more recent, more specific thing to tell the player. An 'error' hint
+  // reuses the fail style (it *is* a failure, just diagnosed more precisely);
+  // every other kind gets the accent-colored, non-alarming hint style.
+  if (currentHint) {
+    banner.classList.add(currentHint.kind === 'error' ? 'banner-fail' : 'banner-hint');
+    banner.textContent = currentHint.message;
     banner.hidden = false;
     return;
   }
@@ -259,20 +280,21 @@ function updateBanner(solved: boolean): void {
   banner.hidden = true;
 }
 
-function updateHintCount(): void {
+function updateClueCount(): void {
   let n = 0;
   for (const c of state.puzzle.clues) if (c !== NO_CLUE) n++;
-  hintCount.textContent = `${n} clue${n === 1 ? '' : 's'}`;
+  clueCount.textContent = `${n} clue${n === 1 ? '' : 's'}`;
 }
 
 function rerender(): void {
   updateHash(state.puzzle);
   setShareUrl(urlbar, state.puzzle);
-  updateHintCount();
+  updateClueCount();
   updateFavoriteBtn();
 
   const solved = isSolved();
-  renderBoard(boardHost, state, { failureCells: failureCells ?? undefined, solved });
+  const hintCells = currentHint && currentHint.cells.length > 0 ? new Set(currentHint.cells) : undefined;
+  renderBoard(boardHost, state, { failureCells: failureCells ?? undefined, hintCells, solved });
   renderBank(bankHost, state.puzzle, state.cellState);
   updateBanner(solved);
 
@@ -288,9 +310,11 @@ function autosaveProgress(): void {
 }
 
 function onBoardChange(): void {
-  // Any edit invalidates the last "Check" result until it's run again.
+  // Any edit invalidates the last "Check" result until it's run again, and
+  // the last "Hint" until the player asks for a new one.
   lastFailures = [];
   failureCells = null;
+  currentHint = null;
   autosaveProgress();
   rerender();
 }
@@ -315,6 +339,12 @@ checkBtn.addEventListener('click', () => {
   for (const f of result.failures) {
     for (const c of f.cells ?? []) failureCells.add(c);
   }
+  rerender();
+});
+hintBtn.addEventListener('click', () => {
+  // Learning mode, not autoplay: this only highlights + explains a cell, it
+  // never paints `state.cellState` itself — the player still has to click.
+  currentHint = computeHint(state.puzzle, state.cellState);
   rerender();
 });
 

@@ -124,7 +124,7 @@ button:disabled {
   cursor: not-allowed;
 }
 
-.hint-count {
+.clue-count {
   font-size: 0.85rem;
   opacity: 0.8;
   padding: 0 0.3rem;
@@ -169,6 +169,11 @@ button:disabled {
 .banner-fail {
   background: var(--fail-bg);
   color: var(--fail-fg);
+}
+
+.banner-hint {
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
 /* --- Board --- */
@@ -239,6 +244,19 @@ button:disabled {
   stroke: var(--failure-cell);
   stroke-width: 4;
   stroke-opacity: 0.95;
+  paint-order: stroke;
+}
+
+/* Hint highlight — same inset-outline treatment as .cell-failure, but
+   accent-colored (not red) so it reads as "learn this" instead of "this is
+   wrong". Drawn in its own layer (see render.ts) so it can coexist with a
+   failure highlight on the same cell. */
+.cell-hint {
+  fill: var(--accent);
+  fill-opacity: 0.25;
+  stroke: var(--accent);
+  stroke-width: 4;
+  stroke-opacity: 0.9;
   paint-order: stroke;
 }
 

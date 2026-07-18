@@ -49,6 +49,8 @@ function arrowPoints(cx: number, cy: number, dir: Dir, cell: number): string {
 export interface RenderOptions {
   /** Cell indices implicated in the last "Check" run — highlighted until the next edit. */
   failureCells?: ReadonlySet<number>;
+  /** Cell indices from the last "Hint" — highlighted (accent, distinct from failures) until the next edit. May coexist with `failureCells`. */
+  hintCells?: ReadonlySet<number>;
   /** Whether the current shading is a full valid solution — highlights the board outline. */
   solved?: boolean;
 }
@@ -133,6 +135,30 @@ export function renderBoard(host: HTMLElement, state: PlayState, opts: RenderOpt
       );
     }
     svg.appendChild(failureLayer);
+  }
+
+  // Hint highlights, its own layer so it can coexist with the failure layer
+  // above (a shaded-wrong cell can be both a Check failure and a Hint error
+  // target at once) — same inset-outline treatment, but accent-colored so it
+  // reads as "learn this" rather than "this is wrong".
+  const hintCells = opts.hintCells;
+  if (hintCells && hintCells.size > 0) {
+    const hintLayer = svgEl('g', { class: 'hint-layer' });
+    const inset = CELL * 0.05;
+    for (const i of hintCells) {
+      const x = i % cols;
+      const y = Math.floor(i / cols);
+      hintLayer.appendChild(
+        svgEl('rect', {
+          x: x * CELL + inset,
+          y: y * CELL + inset,
+          width: CELL - inset * 2,
+          height: CELL - inset * 2,
+          class: 'cell-hint',
+        }),
+      );
+    }
+    svg.appendChild(hintLayer);
   }
 
   // Grid lines, drawn last so they sit crisply above cell fills.
