@@ -9,14 +9,18 @@
  * puzzle. It never branches, never guesses, and duplicates none of the
  * constraint logic: everything decided here is decided by propagate.ts.
  *
- * A note on completeness (measured, see test/deduce.test.ts): the current
- * propagators can only ever *exclude* cells when started from an empty board —
- * a positive shade requires an already-shaded cell to bound a clue's tie
- * distance from above, and nothing in a from-empty run creates that first
- * shade. So `deduce()` does not fully solve real published puzzles today; it is
- * still sound (every cell it decides matches the unique solution), which is the
- * property the generator relies on. Strengthening the propagators to close that
- * gap is deferred to Phase 5 (do NOT add rules here).
+ * A note on completeness (measured, see test/deduce.test.ts): the propagators
+ * are now strong enough to fully solve real published puzzles from an empty
+ * board. The keystone is the arrow ray-length cap (propagate.ts): every arrowed
+ * ray must hit a shaded cell within the board, so the tie distance is bounded
+ * above from an empty board, which lets ties pin and shades appear; those feed
+ * cross-placement `cover-analysis`, the positive/negative rules, and finally
+ * `probe-forcing` (failed-literal "what-if" analysis) in a loop until the board
+ * is decided. `deduce()` remains sound — every cell it decides matches the
+ * unique solution (a probe only forces a value whose negation a *sound*
+ * propagator refuted),
+ * the property the generator relies on. All constraint logic lives in
+ * propagate.ts; this file adds none (it only tiers the emitted steps).
  */
 
 import type { Puzzle, Solution } from '../core/types';
@@ -55,9 +59,15 @@ export const TIER: Record<RuleId, number> = {
   'arrow-distance-bounds': 2,
   'arrow-forced-shade': 3,
   'forced-placement': 4,
+  'cover-analysis': 5,
+  'probe-forcing': 6,
 };
 
-/** Rules whose steps *shade* cells (the rest *exclude*). Used by explainSteps. */
+/**
+ * Rules whose steps *shade* cells (the rest *exclude*), used by explainSteps as
+ * a fallback. `cover-analysis` does both, so its steps carry an explicit
+ * `kind`; a step's own `kind` always wins over this map when present.
+ */
 const SHADE_RULES: ReadonlySet<RuleId> = new Set<RuleId>(['arrow-forced-shade', 'forced-placement']);
 
 function emptyHistogram(): Record<RuleId, number> {
@@ -68,6 +78,8 @@ function emptyHistogram(): Record<RuleId, number> {
     'arrow-distance-bounds': 0,
     'arrow-forced-shade': 0,
     'forced-placement': 0,
+    'cover-analysis': 0,
+    'probe-forcing': 0,
   };
 }
 
@@ -79,7 +91,9 @@ function emptyHistogram(): Record<RuleId, number> {
 export function deduce(puzzle: Puzzle): DeduceResult {
   const model = buildModel(puzzle);
   const state = initState(model);
-  const result = propagateToFixpoint(model, state);
+  // The deducer runs the full engine including the expensive `cover-analysis`
+  // and `probe-forcing` rules (search leaves probing off to stay fast).
+  const result = propagateToFixpoint(model, state, { coverAnalysis: true, probe: true });
   const steps = result.steps;
 
   const tierHistogram = emptyHistogram();
@@ -143,7 +157,7 @@ function solutionFromState(n: number, state: { shaded: { forEach(cb: (i: number)
 export function explainSteps(steps: Step[], cols: number): string[] {
   const ref = (i: number): string => `r${Math.floor(i / cols)}c${i % cols}`;
   return steps.map((step) => {
-    const verb = SHADE_RULES.has(step.rule) ? 'shade' : 'exclude';
+    const verb = step.kind ?? (SHADE_RULES.has(step.rule) ? 'shade' : 'exclude');
     const cells = step.cells.map(ref).join(', ');
     const detail = (step.detail ?? step.rule).replace(/clue (\d+)/g, (_m, n: string) => `clue ${ref(Number(n))}`);
     return `[${step.rule}] ${detail} -> ${verb} ${cells}`;

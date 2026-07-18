@@ -183,21 +183,24 @@ describe('propagators: arrow-distance inference in isolation', () => {
   });
 
   it('exclusions: arrowed cells < lo and unarrowed cells ≤ lo are excluded', () => {
-    // 5x5, clue (2,2) UP+DOWN. Pre-exclude UP d1 (2,1) → lo=2.
-    const puzzle = mkPuzzle(5, 5, { [idx(2, 2, 5)]: dirBit(Dir.Up) | dirBit(Dir.Down) }, empty);
+    // 5x9, clue (2,4) UP+DOWN. Pre-exclude UP d1 (2,3) → lo=2. The tall board
+    // keeps hi=4 (ray-length cap) so the tie ISN'T pinned — this isolates the
+    // exclusion behaviour. `coverAnalysis:false` isolates the arrow rule (an
+    // empty bank would otherwise, soundly, make the whole board a contradiction).
+    const puzzle = mkPuzzle(5, 9, { [idx(2, 4, 5)]: dirBit(Dir.Up) | dirBit(Dir.Down) }, empty);
     const model = buildModel(puzzle);
     const st = initState(model);
-    st.excluded.set(idx(2, 1, 5));
-    const r = propagateToFixpoint(model, st);
+    st.excluded.set(idx(2, 3, 5));
+    const r = propagateToFixpoint(model, st, { coverAnalysis: false });
     expect(r.status).toBe('ok');
-    // Arrowed DOWN cell at d=1 (2,3) is < lo → excluded.
-    expect(st.excluded.test(idx(2, 3, 5))).toBe(true);
+    // Arrowed DOWN cell at d=1 (2,5) is < lo → excluded.
+    expect(st.excluded.test(idx(2, 5, 5))).toBe(true);
     // Unarrowed LEFT/RIGHT cells at d ≤ 2 → excluded.
-    for (const c of [idx(1, 2, 5), idx(0, 2, 5), idx(3, 2, 5), idx(4, 2, 5)]) {
+    for (const c of [idx(1, 4, 5), idx(0, 4, 5), idx(3, 4, 5), idx(4, 4, 5)]) {
       expect(st.excluded.test(c)).toBe(true);
     }
-    // But the arrowed UP cell at d=2 (2,0) — the still-feasible tie — is NOT excluded.
-    expect(st.excluded.test(idx(2, 0, 5))).toBe(false);
+    // But the arrowed UP cell at d=2 (2,2) — a still-feasible tie — is NOT excluded.
+    expect(st.excluded.test(idx(2, 2, 5))).toBe(false);
   });
 
   it('arrow-forced-shade: when lo === hi, each arrowed ray cell at the tie is shaded', () => {
@@ -218,7 +221,9 @@ describe('propagators: arrow-distance inference in isolation', () => {
     const puzzle = mkPuzzle(5, 5, { [idx(2, 2, 5)]: dirBit(Dir.Up) }, empty);
     const model = buildModel(puzzle);
     const st = initState(model);
-    const r = propagateToFixpoint(model, st);
+    // Isolate the clue-cell rule: an empty bank would otherwise let cover-analysis
+    // (soundly) turn this unsatisfiable board into a contradiction.
+    const r = propagateToFixpoint(model, st, { coverAnalysis: false });
     expect(r.status).toBe('ok');
     expect(st.excluded.test(idx(2, 2, 5))).toBe(true);
   });

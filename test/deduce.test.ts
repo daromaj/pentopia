@@ -1,17 +1,16 @@
 /**
  * Tests for the human-style deduction engine (roadmap Phase 4).
  *
- * KEY MEASURED FINDING (see the "diagnostic report" describe block): run from
- * an empty board, the current propagators can only ever EXCLUDE cells — a
- * positive shade needs an already-shaded cell to bound a clue's tie distance
- * from above, and nothing in a from-empty fixed-point run creates that first
- * shade. So `deduce()` does not finish real published puzzles today. That is
- * NOT a failure here: we assert SOUNDNESS (never contradict the unique
- * solution) and record completion stats via console.log, per the brief.
+ * The strengthened propagators (arrow ray-length cap, feasible-hit
+ * intersection, cross-placement cover-analysis, separation placement-filter,
+ * and probe-forcing) now FULLY solve real published boards from an empty board
+ * by pure deduction — see the "completion report" describe block, which asserts
+ * `solved === true` for both valid_6x7 and the §3.4 10x10 sample. We also assert
+ * SOUNDNESS everywhere: every cell deduce() decides matches the unique solution.
  *
- * The no-touch-halo and bank-exhaustion micro-puzzles below therefore exercise
- * the propagator via a seeded `SolveState` (the identical code path `deduce`
- * wraps) — deduce() from an empty board provably cannot reach them.
+ * A few micro-puzzles below still seed a `SolveState` directly to isolate a
+ * single propagator (the identical code path `deduce` wraps) where an
+ * empty-board start would engage several rules at once.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -33,7 +32,6 @@ function mkPuzzle(cols: number, rows: number, clues: Record<number, number>, ban
   for (const k of Object.keys(clues)) c[+k] = clues[+k]!;
   return { cols, rows, clues: c, bank, transparent };
 }
-const empty: Bank = { pieces: [] };
 const mono: Bank = { pieces: [shapeFromStrings(['#'])] };
 const domino: Bank = { pieces: [shapeFromStrings(['##'])] };
 const dominoX2: Bank = { pieces: [shapeFromStrings(['##']), shapeFromStrings(['##'])] };
@@ -45,7 +43,10 @@ function decidedCells(steps: readonly Step[]): { shaded: Set<number>; excluded: 
   const shaded = new Set<number>();
   const excluded = new Set<number>();
   for (const s of steps) {
-    const target = SHADE_RULES.has(s.rule) ? shaded : excluded;
+    // `cover-analysis` shades AND excludes, so its steps carry an explicit
+    // `kind`; the rule-name fallback covers the single-kind rules.
+    const kind = s.kind ?? (SHADE_RULES.has(s.rule) ? 'shade' : 'exclude');
+    const target = kind === 'shade' ? shaded : excluded;
     for (const c of s.cells) target.add(c);
   }
   return { shaded, excluded };
@@ -106,28 +107,34 @@ describe('deduce: §5 micro-puzzles', () => {
   });
 
   it('arrow-distance-bounds (arrowed): a raised lo excludes an arrowed ray prefix', () => {
-    // 5x6, clue (1,3) arrows UP+RIGHT. Two HATENA cells on the UP ray (no arrows
+    // 6x7, clue (1,4) arrows UP+RIGHT. Two HATENA cells on the UP ray (no arrows
     // of their own) are excluded by rule 4, pushing firstNonExcluded(UP)=3, so
-    // lo=3. That forces the RIGHT ray's prefix cells (2,3)=17 and (3,3)=18 — the
-    // still-empty arrowed ray — to be excluded. Only arrow-distance-bounds does this.
-    const clue = idx(1, 3, 5);
-    const r = deduce(mkPuzzle(5, 6, { [clue]: dirBit(Dir.Up) | dirBit(Dir.Right), [idx(1, 2, 5)]: HATENA, [idx(1, 1, 5)]: HATENA }, empty));
+    // lo=3 (and hi=4 from the ray-length cap, so the tie is NOT pinned). That
+    // forces the RIGHT ray's prefix cells (2,4) and (3,4) — the still-empty
+    // arrowed ray — to be excluded. Only arrow-distance-bounds does this. A
+    // viable (mono) bank keeps the board solvable, so cover-analysis doesn't
+    // (soundly) collapse an all-excluded ray into a contradiction.
+    const clue = idx(1, 4, 6);
+    const r = deduce(
+      mkPuzzle(6, 7, { [clue]: dirBit(Dir.Up) | dirBit(Dir.Right), [idx(1, 3, 6)]: HATENA, [idx(1, 2, 6)]: HATENA }, mono),
+    );
     expect(r.contradiction).toBeUndefined();
-    expect(stepFor(r.steps, 'arrow-distance-bounds', [idx(2, 3, 5), idx(3, 3, 5)])).toBe(true);
+    expect(stepFor(r.steps, 'arrow-distance-bounds', [idx(2, 4, 6), idx(3, 4, 6)])).toBe(true);
     const { excluded } = decidedCells(r.steps);
-    expect(excluded.has(idx(2, 3, 5))).toBe(true);
-    expect(excluded.has(idx(3, 3, 5))).toBe(true);
+    expect(excluded.has(idx(2, 4, 6))).toBe(true);
+    expect(excluded.has(idx(3, 4, 6))).toBe(true);
   });
 
   it('arrow-distance-bounds (unarrowed): an unarrowed ray ≤ lo exclusion is decisive', () => {
-    // 5x5, clue (2,2) UP only, empty bank. lo=1 ⇒ the three unarrowed neighbours
+    // 5x5, clue (2,2) UP only, mono bank. lo=1 ⇒ the three unarrowed neighbours
     // DOWN/LEFT/RIGHT at distance 1 must be unshaded (rule 3). Nothing else
-    // touches them, so the unarrowed exclusion is the sole decider.
+    // touches them, so the unarrowed exclusion is the sole decider. (Mono bank so
+    // the arrowed UP ray stays satisfiable — cover-analysis won't fire a contra.)
     const clue = idx(2, 2, 5);
     const down = idx(2, 3, 5);
     const left = idx(1, 2, 5);
     const right = idx(3, 2, 5);
-    const r = deduce(mkPuzzle(5, 5, { [clue]: dirBit(Dir.Up) }, empty));
+    const r = deduce(mkPuzzle(5, 5, { [clue]: dirBit(Dir.Up) }, mono));
     expect(r.contradiction).toBeUndefined();
     expect(stepFor(r.steps, 'arrow-distance-bounds', [down, left, right])).toBe(true);
     const { excluded } = decidedCells(r.steps);
@@ -175,7 +182,7 @@ describe('deduce: §5 micro-puzzles', () => {
   });
 });
 
-// ── 3. Diagnostic report (console.log; assert soundness only) ─────────────────
+// ── 3. Completion report on real boards (now FULLY solved by pure deduction) ──
 describe('deduce: completion report on real boards', () => {
   function report(name: string, puzzle: Puzzle): void {
     const answer = uniqueSolution(puzzle);
@@ -188,6 +195,13 @@ describe('deduce: completion report on real boards', () => {
     const { shaded, excluded } = decidedCells(r.steps);
     for (const c of shaded) expect(answer.shaded[c]).toBe(1);
     for (const c of excluded) expect(answer.shaded[c]).toBe(0);
+    // ACCEPTANCE: the strengthened propagators solve real published boards by
+    // pure deduction — no cell left unresolved, and the deduced answer matches
+    // the unique solution.
+    expect(r.solved).toBe(true);
+    expect(r.unresolved).toBe(0);
+    expect(r.solution).not.toBeNull();
+    expect(Array.from(r.solution!.shaded)).toEqual(Array.from(answer.shaded));
     // Show the first few human-readable hint lines for the UI system.
     for (const line of explainSteps(r.steps, puzzle.cols).slice(0, 3)) console.log(`   ${line}`);
   }
@@ -224,6 +238,8 @@ describe('deduce: TIER map', () => {
       'arrow-distance-bounds': 2,
       'arrow-forced-shade': 3,
       'forced-placement': 4,
+      'cover-analysis': 5,
+      'probe-forcing': 6,
     });
   });
 });

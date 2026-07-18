@@ -12,7 +12,7 @@ export {
 } from './state';
 export type { SolveState } from './state';
 export { propagateToFixpoint } from './propagate';
-export type { PropagationResult, Step, RuleId } from './propagate';
+export type { PropagationResult, Step, RuleId, PropagateOptions } from './propagate';
 export { solve } from './search';
 export type { SolveResult, SolveOptions } from './search';
 export { deduce, explainSteps, TIER } from './deduce';
