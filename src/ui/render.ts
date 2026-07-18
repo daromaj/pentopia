@@ -213,7 +213,12 @@ export function renderBoard(host: HTMLElement, state: PlayState, opts: RenderOpt
 
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: w, height: h, class: 'board-outline' }));
 
-  host.replaceChildren(svg);
+  // Swap only the previous board SVG: celebration overlays (canvas/stamp)
+  // live alongside it in `host`, and replaceChildren would tear them down
+  // mid-show on any re-render.
+  const prev = host.querySelector('svg.board-svg');
+  if (prev) prev.replaceWith(svg);
+  else host.appendChild(svg);
   return svg;
 }
 

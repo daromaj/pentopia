@@ -53,8 +53,7 @@ export function attachBoardInteraction(host: HTMLElement, state: PlayState, onCh
     if (!painting) return;
     const i = cellFromPoint(host, state.puzzle, e.clientX, e.clientY);
     if (i === null) return;
-    continueStroke(state, i);
-    onChange();
+    if (continueStroke(state, i)) onChange();
   });
 
   function finishPointer(e: PointerEvent): void {

@@ -84,11 +84,18 @@ export function startStroke(state: PlayState, i: number, forcedValue?: CellValue
   state.dirty = true;
 }
 
-/** Continue an active stroke onto cell `i`, painting the stroke's fixed value. No-op if no stroke is active. */
-export function continueStroke(state: PlayState, i: number): void {
-  if (!state.strokeActive || state.strokePaintValue === null) return;
-  if (isClueCell(state, i)) return;
+/**
+ * Continue an active stroke onto cell `i`, painting the stroke's fixed value.
+ * Returns whether a cell actually changed — false for no active stroke, clue
+ * cells, and cells already holding the stroke value, so callers can skip
+ * re-rendering on the pointermove flood a single press produces.
+ */
+export function continueStroke(state: PlayState, i: number): boolean {
+  if (!state.strokeActive || state.strokePaintValue === null) return false;
+  if (isClueCell(state, i)) return false;
+  if (state.cellState[i] === state.strokePaintValue) return false;
   state.cellState[i] = state.strokePaintValue;
+  return true;
 }
 
 export function endStroke(state: PlayState): void {
