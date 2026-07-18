@@ -80,6 +80,13 @@ export function setShareUrl(bar: UrlBar, puzzle: Puzzle): void {
   bar.input.value = `https://puzz.link/p?${encodeUrl(puzzle)}`;
 }
 
+/** Whether the current page URL carries a puzzle deep link (`?p=` or a non-empty hash), regardless of whether it parses. */
+export function hasDeepLink(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('p')) return true;
+  return window.location.hash.replace(/^#/, '') !== '';
+}
+
 /** Resolve the startup puzzle from `?p=`, then `location.hash`, falling back to the format §3.4 sample. */
 export function loadStartupPuzzle(): Puzzle {
   const params = new URLSearchParams(window.location.search);

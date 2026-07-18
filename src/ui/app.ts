@@ -1,13 +1,14 @@
 import './styles.css';
 
 import { validate } from '../core/validator';
-import { decodeUrl } from '../core/codec/url';
-import type { Failure } from '../core/types';
+import { decodeUrl, encodeUrl } from '../core/codec/url';
+import type { Failure, Puzzle } from '../core/types';
 import { NO_CLUE } from '../core/types';
 import type { WorkerRequest, WorkerResponse } from '../generator/worker';
 import {
   createPlayState,
   loadPuzzle,
+  resetBoard,
   undo,
   redo,
   FAILCODE_MESSAGES,
@@ -16,7 +17,15 @@ import {
 import type { PlayState } from './state';
 import { renderBoard, renderBank } from './render';
 import { attachBoardInteraction, attachKeyboardShortcuts } from './interaction';
-import { createUrlBar, setShareUrl, loadStartupPuzzle, updateHash } from './urlbar';
+import {
+  createUrlBar,
+  setShareUrl,
+  loadStartupPuzzle,
+  hasDeepLink,
+  updateHash,
+} from './urlbar';
+import { saveProgress, loadProgress, setLastPlayed, getLastPlayed, addFavorite, removeFavorite, isFavorite } from './persist';
+import { createFavoritesPanel, defaultFavoriteName } from './favorites';
 
 const appRoot = document.getElementById('app');
 if (!appRoot) {
@@ -53,6 +62,18 @@ checkBtn.type = 'button';
 checkBtn.textContent = 'Check';
 checkBtn.dataset.hook = 'check-btn';
 
+const resetBtn = document.createElement('button');
+resetBtn.type = 'button';
+resetBtn.textContent = 'Reset';
+resetBtn.title = 'Clear the board for this puzzle (undoable)';
+resetBtn.dataset.hook = 'reset-btn';
+
+const favoriteBtn = document.createElement('button');
+favoriteBtn.type = 'button';
+favoriteBtn.className = 'favorite-btn';
+favoriteBtn.title = 'Favorite this puzzle';
+favoriteBtn.dataset.hook = 'favorite-btn';
+
 const hintCount = document.createElement('span');
 hintCount.className = 'hint-count';
 hintCount.dataset.hook = 'hint-count';
@@ -84,7 +105,7 @@ generateBtn.type = 'button';
 generateBtn.textContent = 'New puzzle';
 generateBtn.dataset.hook = 'generate-puzzle';
 
-actions.append(undoBtn, redoBtn, checkBtn, hintCount, sizeSelect, difficultySelect, generateBtn);
+actions.append(undoBtn, redoBtn, checkBtn, resetBtn, hintCount, sizeSelect, difficultySelect, generateBtn);
 toolbar.append(urlbarMount, actions);
 
 const banner = document.createElement('div');
@@ -99,29 +120,101 @@ const boardHost = document.createElement('div');
 boardHost.className = 'board-host';
 boardHost.dataset.hook = 'board-host';
 
+const bankColumn = document.createElement('div');
+bankColumn.className = 'bank-column';
+
 const bankHost = document.createElement('div');
 bankHost.className = 'bank-host';
 bankHost.dataset.hook = 'bank-host';
 
-boardArea.append(boardHost, bankHost);
+const favoritesHost = document.createElement('div');
+favoritesHost.className = 'favorites-host';
+
+bankColumn.append(bankHost, favoritesHost);
+boardArea.append(boardHost, bankColumn);
 root.append(toolbar, banner, boardArea);
 appRoot.append(root);
 
 // --- State --------------------------------------------------------------
 
-const state: PlayState = createPlayState(loadStartupPuzzle());
+/**
+ * Startup puzzle: a deep link (`?p=` / hash) always wins (so a shared link
+ * never gets silently swapped for whatever was last played on this
+ * machine). Absent a deep link, resume `getLastPlayed()`'s puzzle; absent
+ * that too, `loadStartupPuzzle()` falls through to the format §3.4 sample.
+ */
+function resolveStartupPuzzle(): Puzzle {
+  if (hasDeepLink()) return loadStartupPuzzle();
+  const lastKey = getLastPlayed();
+  if (lastKey) {
+    try {
+      return decodeUrl(lastKey);
+    } catch {
+      // stale/corrupt lastPlayed entry — fall through to the default sample.
+    }
+  }
+  return loadStartupPuzzle();
+}
+
+const state: PlayState = createPlayState(resolveStartupPuzzle());
 let lastFailures: readonly Failure[] = [];
 let failureCells: Set<number> | null = null;
 
+/**
+ * Overwrite `state.cellState` with any saved progress for puzzle `key`
+ * (goes through the same "clean undo/redo" contract `loadPuzzle` already
+ * gives us: stacks are reset to empty right before this runs). No-op if
+ * nothing is saved, or the saved length doesn't match the current puzzle's
+ * cell count (defends against a stale entry from an edited/differently-sized
+ * puzzle sharing a key by coincidence — shouldn't happen, but cheap to check).
+ */
+function restoreProgress(key: string): void {
+  const saved = loadProgress(key);
+  if (saved && saved.length === state.cellState.length) {
+    state.cellState = saved;
+    state.undoStack = [];
+    state.redoStack = [];
+  }
+}
+
+restoreProgress(encodeUrl(state.puzzle));
+
+/** Load `puzzle` through the full path — reset state, restore saved progress, clear stale Check results, re-render — shared by urlbar Load, favorites, and (new) puzzle generation. */
+function loadPuzzleAndRestore(puzzle: Puzzle): void {
+  loadPuzzle(state, puzzle);
+  restoreProgress(encodeUrl(state.puzzle));
+  lastFailures = [];
+  failureCells = null;
+  rerender();
+}
+
 const urlbar = createUrlBar({
-  onLoad: (puzzle) => {
-    loadPuzzle(state, puzzle);
-    lastFailures = [];
-    failureCells = null;
-    rerender();
-  },
+  onLoad: (puzzle) => loadPuzzleAndRestore(puzzle),
 });
-urlbarMount.appendChild(urlbar.root);
+urlbarMount.append(urlbar.root, favoriteBtn);
+
+const favoritesPanel = createFavoritesPanel({
+  onSelect: (puzzle) => loadPuzzleAndRestore(puzzle),
+});
+favoritesHost.appendChild(favoritesPanel.root);
+
+function updateFavoriteBtn(): void {
+  const fav = isFavorite(encodeUrl(state.puzzle));
+  favoriteBtn.textContent = fav ? '★' : '☆';
+  favoriteBtn.classList.toggle('is-favorite', fav);
+  favoriteBtn.setAttribute('aria-pressed', String(fav));
+}
+
+favoriteBtn.addEventListener('click', () => {
+  const url = encodeUrl(state.puzzle);
+  if (isFavorite(url)) {
+    removeFavorite(url);
+  } else {
+    addFavorite({ url, name: defaultFavoriteName(state.puzzle) });
+  }
+  updateFavoriteBtn();
+  favoritesPanel.refresh();
+});
 
 // --- Wiring ---------------------------------------------------------------
 
@@ -176,6 +269,7 @@ function rerender(): void {
   updateHash(state.puzzle);
   setShareUrl(urlbar, state.puzzle);
   updateHintCount();
+  updateFavoriteBtn();
 
   const solved = isSolved();
   renderBoard(boardHost, state, { failureCells: failureCells ?? undefined, solved });
@@ -186,10 +280,18 @@ function rerender(): void {
   redoBtn.disabled = state.redoStack.length === 0;
 }
 
+/** Persist the current board (cellState) + mark this puzzle as last-played. Any storage failure is silently swallowed inside persist.ts. */
+function autosaveProgress(): void {
+  const key = encodeUrl(state.puzzle);
+  saveProgress(key, state.cellState);
+  setLastPlayed(key);
+}
+
 function onBoardChange(): void {
   // Any edit invalidates the last "Check" result until it's run again.
   lastFailures = [];
   failureCells = null;
+  autosaveProgress();
   rerender();
 }
 
@@ -201,6 +303,10 @@ undoBtn.addEventListener('click', () => {
 });
 redoBtn.addEventListener('click', () => {
   if (redo(state)) onBoardChange();
+});
+resetBtn.addEventListener('click', () => {
+  resetBoard(state);
+  onBoardChange();
 });
 checkBtn.addEventListener('click', () => {
   const result = validate(state.puzzle, { shaded: currentShaded() });
@@ -246,10 +352,7 @@ generateBtn.addEventListener('click', () => {
       return;
     }
     try {
-      loadPuzzle(state, decodeUrl(msg.result.puzzleUrl));
-      lastFailures = [];
-      failureCells = null;
-      rerender();
+      loadPuzzleAndRestore(decodeUrl(msg.result.puzzleUrl));
     } catch (e) {
       showGenerateError(e instanceof Error ? e.message : String(e));
     }

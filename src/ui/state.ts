@@ -96,6 +96,20 @@ export function endStroke(state: PlayState): void {
   state.strokePaintValue = null;
 }
 
+/**
+ * Clear the board back to all-untouched, taking one undo snapshot first (so
+ * a Reset is a single undoable step, same as any other stroke). Clue cells
+ * were never represented in `cellState` to begin with, so a flat fill is
+ * enough — no special-casing needed.
+ */
+export function resetBoard(state: PlayState): void {
+  pushHistory(state);
+  state.cellState.fill(UNTOUCHED);
+  state.strokeActive = false;
+  state.strokePaintValue = null;
+  state.dirty = true;
+}
+
 export function undo(state: PlayState): boolean {
   if (state.undoStack.length === 0) return false;
   state.redoStack.push(state.cellState.slice());
