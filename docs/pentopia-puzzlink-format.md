@@ -395,15 +395,18 @@ the mistake needed to trigger one specific check, so they can be used
 directly to validate a from-scratch solver/validator implementation
 against the reference engine's behavior.
 
-## 5. Solvability: negative constraints are the primary deduction engine
+## 5. Solvability: negative constraints matter as much as the rules themselves
 
 A well-formed Pentopia puzzle should never require the solver to guess and
 backtrack — every cell's shaded/unshaded status should be forced by a
-chain of rule applications. In practice, almost all of that forcing comes
-from **negative constraints** (ruling cells out), not positive ones
-(placing a shape outright). A generator should treat these as the primary
-tool for guaranteeing a "logical", guess-free solve path, not merely as
-post-hoc validity checks run once a candidate solution already exists.
+chain of rule applications. That forcing comes from two equally important
+sources: positive deductions (placing/completing a shape) and **negative
+constraints** (ruling cells out). Neither is secondary to the other — a
+generator that only reasons about what *must* be shaded, without also
+tracking what's thereby *forbidden* from being shaded, will miss most of
+the deduction chain and can't guarantee a guess-free solve. These
+exclusions are part of the rule set, not an optional add-on layered on
+top of it, and should be checked with the same rigor as the rules in §2.
 
 The negative constraints available, all directly from the rules in §2:
 
@@ -430,16 +433,20 @@ The negative constraints available, all directly from the rules in §2:
    ruling out an otherwise-plausible completion of a partially shaded
    region.
 
-Positive information is comparatively rare and mostly derivative: a cell
-gets shaded only because it's forced to complete an already partly-known
+A cell gets shaded because it's forced to complete an already partly-known
 shape, or because it's the unique remaining candidate for an arrow's
-required hit at its tied distance. A generator that only checks "does
-this puzzle have a unique solution" (e.g. via brute-force/backtracking
-search) is not sufficient on its own — that guarantees a unique *answer*
-but not a guess-free *solve path*. To guarantee the latter, the generator
-(or a companion "human-solvability" checker) should confirm the puzzle can
-be fully solved by iterating constraints 1–5 above (plus shape-completion
-logic) to a fixed point, with no branching or backtracking ever required.
+required hit at its tied distance — but reaching either of those points
+usually depends on cells having *already* been excluded by constraints
+1–5. The two kinds of deduction feed each other in a loop: exclusions
+narrow down where a shape can go, which completes shapes, which triggers
+more exclusions around them, and so on. A generator that only checks
+"does this puzzle have a unique solution" (e.g. via brute-force/
+backtracking search) is not sufficient on its own — that guarantees a
+unique *answer* but not a guess-free *solve path*. To guarantee the
+latter, the generator (or a companion "human-solvability" checker) should
+confirm the puzzle can be fully solved by iterating both the positive
+shape-completion logic and constraints 1–5 above, together, to a fixed
+point, with no branching or backtracking ever required.
 
 ## Appendix A: Pentomino / tetromino catalog
 
