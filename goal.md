@@ -41,7 +41,3 @@ Running in the browser means it costs nothing to host, scales to any number
 of visitors, and avoids the cold-start/time-limit constraints of a free
 serverless backend. This is a direction, not a locked-in decision.
 
-## Non-goals (for now)
-
-- No implementation yet — this file only captures the high-level intent.
-- No commitment yet to specific languages/frameworks/architecture.
