@@ -288,7 +288,10 @@ export function renderBank(host: HTMLElement, puzzle: Puzzle, cellState: Uint8Ar
 
     const badge = document.createElement('div');
     badge.className = 'bank-count';
-    badge.textContent = count > 1 ? `${remaining}/${count}` : exhausted ? 'used' : '';
+    // Non-breaking space keeps the badge line-box (and thus the tile height)
+    // identical whether or not a label is shown — otherwise the "used" label
+    // appearing grows the bank panel and shifts the board mid-interaction.
+    badge.textContent = count > 1 ? `${remaining}/${count}` : exhausted ? 'used' : '\u00a0';
     tile.appendChild(badge);
 
     panel.appendChild(tile);
