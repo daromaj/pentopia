@@ -14,13 +14,6 @@ All three should speak the same puzzle representation, based on the
 puz­z.link/pzprjs encoding, so puzzles can be freely exchanged between them,
 shared as puz­z.link-style URLs, and opened in the actual puzz.link player.
 
-## Why this puzzle
-
-Pentopia doesn't seem to have dedicated generator/solver tooling readily
-available, and it's a good fit for a small self-contained project: simple
-rules, a compact board, and an existing, well-specified format to target
-compatibility with.
-
 ## Reference material already captured
 
 Before any implementation, the puzzle format itself was researched and
