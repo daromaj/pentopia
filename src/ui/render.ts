@@ -146,9 +146,9 @@ export function renderBoard(host: HTMLElement, state: PlayState, opts: RenderOpt
       } else if (cellState[i] === SHADED) {
         svg.appendChild(svgEl('rect', { x: cx, y: cy, width: CELL, height: CELL, class: 'cell-shaded' }));
       } else if (cellState[i] === MARKED_EMPTY) {
-        svg.appendChild(
-          svgEl('circle', { cx: cx + CELL / 2, cy: cy + CELL / 2, r: CELL * 0.08, class: 'cell-marked' }),
-        );
+        // Marked-empty cells share the clue cells' "known empty" fill — both
+        // mean the same thing (no shape here); arrows just sit on some of them.
+        svg.appendChild(svgEl('rect', { x: cx, y: cy, width: CELL, height: CELL, class: 'cell-marked' }));
       }
     }
   }
