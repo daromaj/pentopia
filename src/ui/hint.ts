@@ -111,8 +111,10 @@ function buildStepMessage(step: Step, kind: 'shade' | 'exclude', primaryCell: nu
       const clueRef = refFromDetail(step.detail, /clue (\d+)/, cols) ?? primary;
       return `The arrows at ${clueRef} point to the nearest shape. Cells closer than that (or in unmarked directions at that distance) must be empty — mark ${primary} empty.`;
     }
-    case 'arrow-forced-shade':
-      return `All arrows of a clue hit at the same distance — the cell at ${primary} must be shaded.`;
+    case 'arrow-forced-shade': {
+      const clueRef = refFromDetail(step.detail, /clue (\d+)/, cols) ?? primary;
+      return `The clue at ${clueRef} must reach its nearest shape at one fixed distance in every arrowed direction — ${primary} is the only cell its arrows can still land on, so it must be shaded.`;
+    }
     case 'forced-placement': {
       const shadedRef = refFromDetail(step.detail, /^cell (\d+)/, cols) ?? primary;
       return `Only one piece can cover the shaded cell at ${shadedRef} — complete it by shading ${primary}.`;
