@@ -42,6 +42,12 @@ export interface DeduceResult {
   readonly unresolved: number;
   /** Highest tier over emitted steps (0 when nothing was emitted). */
   readonly maxTier: number;
+  /**
+   * Longest forced-move chain over any probe step (0 when no probe fired) — the
+   * deepest look-ahead the puzzle requires. See `Step.probeChain`. The generator
+   * caps this so accepted puzzles never demand an absurdly long what-if.
+   */
+  readonly maxProbeChain: number;
   /** Count of emitted steps per rule. */
   readonly tierHistogram: Record<RuleId, number>;
   /** Present iff propagation reported a contradiction; the human-readable reason. */
@@ -120,9 +126,11 @@ export function deduce(puzzle: Puzzle): DeduceResult {
 
   const tierHistogram = emptyHistogram();
   let maxTier = 0;
+  let maxProbeChain = 0;
   for (const step of steps) {
     tierHistogram[step.rule] += 1;
     if (TIER[step.rule] > maxTier) maxTier = TIER[step.rule];
+    if (step.probeChain !== undefined && step.probeChain > maxProbeChain) maxProbeChain = step.probeChain;
   }
 
   const unresolved = unknownCells(model, state).popcount();
@@ -136,6 +144,7 @@ export function deduce(puzzle: Puzzle): DeduceResult {
       steps,
       unresolved,
       maxTier,
+      maxProbeChain,
       tierHistogram,
       contradiction: result.reason,
     };
@@ -155,6 +164,7 @@ export function deduce(puzzle: Puzzle): DeduceResult {
     steps,
     unresolved,
     maxTier,
+    maxProbeChain,
     tierHistogram,
   };
 }
