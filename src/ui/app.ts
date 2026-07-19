@@ -208,6 +208,8 @@ let lastFailures: readonly Failure[] = [];
 let failureCells: Set<number> | null = null;
 /** Last "Hint" result — highlight + banner persist until the next board edit (same lifecycle as `failureCells`/`lastFailures`). Learning mode never applies this for the player; it's display-only. */
 let currentHint: Hint | null = null;
+/** Set once the player closes the standing challenge banner, so it stays dismissed for this puzzle instead of reappearing on every re-render. Reset when a new puzzle loads. */
+let challengeDismissed = false;
 
 // --- Solve timer + challenge context ---------------------------------------
 
@@ -324,6 +326,7 @@ function loadPuzzleAndRestore(puzzle: Puzzle): void {
   lastFailures = [];
   failureCells = null;
   currentHint = null;
+  challengeDismissed = false;
   rerender();
 }
 
@@ -372,9 +375,34 @@ function isSolved(): boolean {
   return validate(state.puzzle, { shaded }).ok;
 }
 
+/** Dismiss whatever transient message the banner is showing (hint, Check result, or challenge) and clear the board highlights that came with it. */
+function dismissBanner(): void {
+  currentHint = null;
+  lastFailures = [];
+  failureCells = null;
+  challengeDismissed = true;
+  rerender();
+}
+
+/** Append a close (×) button to the banner and mark it as closeable (reserves padding for the button). */
+function addBannerCloseButton(): void {
+  banner.classList.add('has-close');
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'banner-close';
+  close.textContent = '×';
+  close.title = 'Dismiss';
+  close.setAttribute('aria-label', 'Dismiss');
+  close.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dismissBanner();
+  });
+  banner.appendChild(close);
+}
+
 function updateBanner(solved: boolean): void {
   banner.replaceChildren();
-  banner.classList.remove('banner-solved', 'banner-fail', 'banner-hint', 'banner-challenge');
+  banner.classList.remove('banner-solved', 'banner-fail', 'banner-hint', 'banner-challenge', 'has-close');
   banner.removeAttribute('title');
   if (solved) {
     banner.classList.add('banner-solved');
@@ -402,6 +430,7 @@ function updateBanner(solved: boolean): void {
   if (currentHint) {
     banner.classList.add(currentHint.kind === 'error' ? 'banner-fail' : 'banner-hint');
     banner.textContent = currentHint.message;
+    addBannerCloseButton();
     banner.hidden = false;
     return;
   }
@@ -416,20 +445,20 @@ function updateBanner(solved: boolean): void {
       list.appendChild(li);
     }
     banner.append(heading, list);
+    addBannerCloseButton();
     banner.hidden = false;
     return;
   }
   // Lowest priority: the standing challenge from a shared link — but only
-  // while the board is still untouched. The banner overlays the grid, so it
-  // gets out of the way the moment solving starts (the solved dialog brings
-  // the head-to-head back at the end).
+  // while the board is still untouched and the player hasn't dismissed it.
   const challenge = challengeForCurrentPuzzle();
   const boardUntouched = !state.cellState.some((v) => v !== UNTOUCHED);
-  if (challenge && boardUntouched) {
+  if (challenge && boardUntouched && !challengeDismissed) {
     banner.classList.add('banner-challenge');
     banner.textContent =
       `🏁 ${challenge.name} solved this in ${formatTime(challenge.timeMs)} — can you beat it?` +
       (challenge.verified ? '' : ' (unverified time)');
+    addBannerCloseButton();
     banner.hidden = false;
     return;
   }
@@ -584,9 +613,10 @@ let generatorWorker: Worker | null = null;
 
 function showGenerateError(message: string): void {
   banner.replaceChildren();
-  banner.classList.remove('banner-solved');
+  banner.classList.remove('banner-solved', 'banner-hint', 'banner-challenge', 'has-close');
   banner.classList.add('banner-fail');
   banner.textContent = `Generation failed: ${message}`;
+  addBannerCloseButton();
   banner.hidden = false;
 }
 

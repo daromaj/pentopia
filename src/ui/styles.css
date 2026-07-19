@@ -223,16 +223,15 @@ button:disabled {
   flex-direction: column;
 }
 
-/* --- Banner: overlaid above the board, never pushes layout --- */
+/* --- Banner: sits in flow above the board, so it never covers the grid --- */
 
 .banner {
-  position: absolute;
-  top: 0.5rem;
-  left: 50%;
-  transform: translateX(-50%);
+  position: relative;
+  align-self: center;
   z-index: 10;
   max-width: min(90%, 34rem);
   width: max-content;
+  margin: 0.4rem 0 0.2rem;
   padding: 0.6rem 0.9rem;
   border-radius: var(--radius-card);
   font-weight: 600;
@@ -240,14 +239,44 @@ button:disabled {
   animation: banner-in 0.18s ease-out;
 }
 
+/* Room for the absolutely-positioned close button on dismissible banners. */
+.banner.has-close {
+  padding-right: 2.3rem;
+}
+
+.banner-close {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.35rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: none;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: inherit;
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.banner-close:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.14);
+}
+
 @keyframes banner-in {
   from {
     opacity: 0;
-    transform: translateX(-50%) translateY(-6px);
+    transform: translateY(-6px);
   }
   to {
     opacity: 1;
-    transform: translateX(-50%) translateY(0);
+    transform: translateY(0);
   }
 }
 
