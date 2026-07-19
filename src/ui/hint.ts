@@ -180,9 +180,13 @@ function buildStepMessage(step: Step, kind: 'shade' | 'exclude', primaryCell: nu
     case 'probe-forcing-2': {
       const reason = step.detail?.match(/contradiction \(depth \d+\): (.+)$/)?.[1];
       const because = humanizeContradiction(reason, cols);
+      // The contradiction is usually several forced moves away from `primary`
+      // (and the named clue/cell can be nowhere near it), so the wording spells
+      // out that it's the end of a chain — not a direct, one-step consequence —
+      // or a distant culprit reads as a non-sequitur.
       return kind === 'exclude'
-        ? `Look ahead: if ${primary} were shaded, ${because} — so ${primary} must stay empty.`
-        : `Look ahead: if ${primary} stays empty, ${because} — so ${primary} must be shaded.`;
+        ? `Look ahead: if ${primary} were shaded, then playing out the forced moves eventually breaks down — ${because}. So ${primary} must stay empty.`
+        : `Look ahead: if ${primary} were left empty, then playing out the forced moves eventually breaks down — ${because}. So ${primary} must be shaded.`;
     }
     case 'placement-filtering':
     default:
