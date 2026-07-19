@@ -92,6 +92,38 @@ function stepKind(step: Step): 'shade' | 'exclude' {
 }
 
 /**
+ * Turn a probe step's raw inner-contradiction reason (the tail of its `detail`,
+ * e.g. `clue 27: arrowed ray Down cannot reach pinned tie 3`) into a
+ * player-facing clause that names the concrete clue/cell the what-if breaks —
+ * the useful "which piece/clue" link, not just "it contradicts". Indices in the
+ * reason are 0-indexed flat cell numbers, rendered here as 1-indexed refs.
+ * Falls back to a generic clause when the reason matches no known shape.
+ */
+function humanizeContradiction(reason: string | undefined, cols: number): string {
+  if (!reason) return 'the board can no longer be completed';
+
+  // Clue contradictions (tie-distance and per-clue candidate rules): name the
+  // clue, and its arrow direction when the reason mentions one. Covers every
+  // `clue N: …` reason those rules emit.
+  let m = reason.match(/clue (\d+):.*arrowed ray (\w+)/);
+  if (m) return `the clue at ${ref(Number(m[1]), cols)} could no longer satisfy its ${m[2]!.toLowerCase()} arrow`;
+  m = reason.match(/clue (\d+):/);
+  if (m) return `the clue at ${ref(Number(m[1]), cols)} could no longer be satisfied`;
+
+  // A shaded cell no remaining piece can complete.
+  m = reason.match(/shaded cell (\d+) cannot be covered/);
+  if (m) return `the shaded cell at ${ref(Number(m[1]), cols)} could not be completed by any remaining piece`;
+
+  // A nested probe left some cell with no legal value.
+  m = reason.match(/cell (\d+): both shading and leaving it unshaded/);
+  if (m) return `the cell at ${ref(Number(m[1]), cols)} would be left with no legal value`;
+
+  if (/both shaded and excluded/.test(reason)) return 'a cell would have to be both filled and empty';
+
+  return 'the board can no longer be completed';
+}
+
+/**
  * Beginner-friendly one-liner for `step`, adapted from `explainSteps`'
  * per-rule phrasing. `primaryCell` is the first still-undecided cell of the
  * step (the one actually highlighted); some rules also reference a *second*
@@ -130,10 +162,13 @@ function buildStepMessage(step: Step, kind: 'shade' | 'exclude', primaryCell: nu
         : `Only a few pieces can satisfy the arrows at ${clueRef} — all of them leave ${primary} as empty border, so mark it empty.`;
     }
     case 'probe-forcing':
-    case 'probe-forcing-2':
+    case 'probe-forcing-2': {
+      const reason = step.detail?.match(/contradiction \(depth \d+\): (.+)$/)?.[1];
+      const because = humanizeContradiction(reason, cols);
       return kind === 'exclude'
-        ? `Try assuming ${primary} is shaded — it leads to a contradiction, so it must be empty.`
-        : `Try assuming ${primary} stays empty — it leads to a contradiction, so it must be shaded.`;
+        ? `Look ahead: if ${primary} were shaded, ${because} — so ${primary} must stay empty.`
+        : `Look ahead: if ${primary} stays empty, ${because} — so ${primary} must be shaded.`;
+    }
     case 'placement-filtering':
     default:
       return kind === 'shade' ? `Deduction: ${primary} must be shaded.` : `Deduction: ${primary} must stay empty.`;

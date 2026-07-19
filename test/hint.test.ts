@@ -6,12 +6,15 @@
 
 import { describe, it, expect } from 'vitest';
 import { computeHint, _hintCacheSizeForTests } from '../src/ui/hint';
-import { SHADED, MARKED_EMPTY } from '../src/ui/state';
+import { SHADED, MARKED_EMPTY, UNTOUCHED } from '../src/ui/state';
 import { solve } from '@solver/search';
+import { deduce } from '@solver/deduce';
 import { decodeUrl } from '@core/codec/url';
 import { shapeFromStrings } from '@core/shape';
 import { idx } from '@core/grid';
 import { NO_CLUE, dirBit, Dir, type Bank, type Puzzle, type Solution } from '@core/types';
+
+const SHADE_RULES = new Set(['arrow-forced-shade', 'forced-placement']);
 
 function mkPuzzle(cols: number, rows: number, clues: Record<number, number>, bank: Bank): Puzzle {
   const c = new Int16Array(cols * rows).fill(NO_CLUE);
@@ -106,6 +109,36 @@ describe('computeHint', () => {
     expect(hint!.cells).toEqual([]);
     expect(hint!.message.toLowerCase()).toMatch(/unique solution/);
   });
+
+  it('a probe-forcing hint names the concrete clue/cell the what-if breaks (option 2)', () => {
+    // The §3.4 sample needs failed-literal probing to finish. Replay the
+    // deduction up to just before its first probe step, then confirm the hint
+    // surfaces *why* the probe breaks (which clue/cell), not just *that* it does.
+    const d = deduce(SAMPLE);
+    const probeIdx = d.steps.findIndex((s) => s.rule === 'probe-forcing' || s.rule === 'probe-forcing-2');
+    expect(probeIdx).toBeGreaterThanOrEqual(0);
+
+    const cellState = new Uint8Array(SAMPLE.cols * SAMPLE.rows).fill(UNTOUCHED);
+    for (let i = 0; i < probeIdx; i++) {
+      const s = d.steps[i]!;
+      const kind = s.kind ?? (SHADE_RULES.has(s.rule) ? 'shade' : 'exclude');
+      for (const c of s.cells) {
+        if (SAMPLE.clues[c] !== NO_CLUE) continue; // clue cells are UI-inert
+        cellState[c] = kind === 'shade' ? SHADED : MARKED_EMPTY;
+      }
+    }
+
+    const hint = computeHint(SAMPLE, cellState);
+    expect(hint).not.toBeNull();
+    expect(['shade', 'exclude']).toContain(hint!.kind);
+    expect(hint!.message).toMatch(/^Look ahead:/);
+    // It cites a concrete second culprit (a clue or shaded cell), not the
+    // generic fallback, and never leaks the raw internal detail string.
+    expect(hint!.message).not.toMatch(/the board can no longer be completed/);
+    expect(hint!.message).not.toMatch(/contradiction \(depth/);
+    // Two cell references: the probed cell plus the clue/cell it breaks.
+    expect(hint!.message.match(/r\d+c\d+/g)!.length).toBeGreaterThanOrEqual(2);
+  }, 30_000);
 
   it('malformed input (cellState length mismatch) returns null rather than throwing', () => {
     const puzzle = mkPuzzle(3, 3, {}, mono);

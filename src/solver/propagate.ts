@@ -781,11 +781,13 @@ function ruleProbe(ctx: Ctx, opts: ProbeInnerOpts, depth: 1 | 2): void {
 
     const ifShaded = cloneState(state);
     ifShaded.shaded.set(u);
-    const shadeContra = propagateToFixpoint(model, ifShaded, inner).status === 'contradiction';
+    const shadeResult = propagateToFixpoint(model, ifShaded, inner);
+    const shadeContra = shadeResult.status === 'contradiction';
 
     const ifExcluded = cloneState(state);
     ifExcluded.excluded.set(u);
-    const excludeContra = propagateToFixpoint(model, ifExcluded, inner).status === 'contradiction';
+    const excludeResult = propagateToFixpoint(model, ifExcluded, inner);
+    const excludeContra = excludeResult.status === 'contradiction';
 
     if (shadeContra && excludeContra) {
       ctx.contradiction = `cell ${u}: both shading and leaving it unshaded lead to a contradiction`;
@@ -793,12 +795,14 @@ function ruleProbe(ctx: Ctx, opts: ProbeInnerOpts, depth: 1 | 2): void {
     }
     if (shadeContra) {
       if (exclude(ctx, u)) {
-        ctx.steps.push({ rule: ruleId, kind: 'exclude', cells: [u], detail: `shading cell ${u} forces a contradiction (depth ${depth})` });
+        // Carry the inner contradiction's reason (which concrete clue/cell broke)
+        // so the hint layer can tell the player *why*, not just *that*, it breaks.
+        ctx.steps.push({ rule: ruleId, kind: 'exclude', cells: [u], detail: `shading cell ${u} forces a contradiction (depth ${depth}): ${shadeResult.reason}` });
         if (depth === 2) return; // fall back to the cheap fixpoint before more depth-2 work
       }
     } else if (excludeContra) {
       if (shade(ctx, u)) {
-        ctx.steps.push({ rule: ruleId, kind: 'shade', cells: [u], detail: `leaving cell ${u} unshaded forces a contradiction (depth ${depth})` });
+        ctx.steps.push({ rule: ruleId, kind: 'shade', cells: [u], detail: `leaving cell ${u} unshaded forces a contradiction (depth ${depth}): ${excludeResult.reason}` });
         if (depth === 2) return;
       }
     }
