@@ -37,7 +37,7 @@ import { SHADED, MARKED_EMPTY, UNTOUCHED } from './state';
 
 export interface Hint {
   readonly kind: 'error' | 'shade' | 'exclude' | 'solved' | 'stuck';
-  /** Cell indices to highlight (row-major), capped small — a hint should point at a handful of cells, not the whole board. */
+  /** Cell indices to highlight (row-major). A hint focuses on one cell at a time (`error`/`shade`/`exclude` return exactly one); `solved`/`stuck` return none. */
   readonly cells: number[];
   readonly message: string;
 }
@@ -143,27 +143,19 @@ function isActionable(puzzle: Puzzle, cell: number): boolean {
   return puzzle.clues[cell] === NO_CLUE;
 }
 
-/** Any cell the player SHADED that the solution leaves unshaded, or MARKED_EMPTY that the solution shades. Capped at a few cells; the message is keyed off the first offender's error type. */
+/** The first cell the player SHADED that the solution leaves unshaded, or MARKED_EMPTY that the solution shades. A hint points at one cell at a time, so we stop at the first offender and key the message off its error type. */
 function findErrorHint(cellState: Uint8Array, solution: Solution, cols: number): Hint | null {
-  const CAP = 3;
-  const cells: number[] = [];
-  let kind: 'shaded' | 'marked' | null = null;
-  for (let i = 0; i < cellState.length && cells.length < CAP; i++) {
-    if (cellState[i] === SHADED && solution.shaded[i] !== 1) {
-      cells.push(i);
-      kind ??= 'shaded';
-    } else if (cellState[i] === MARKED_EMPTY && solution.shaded[i] === 1) {
-      cells.push(i);
-      kind ??= 'marked';
-    }
+  for (let i = 0; i < cellState.length; i++) {
+    const wronglyShaded = cellState[i] === SHADED && solution.shaded[i] !== 1;
+    const wronglyMarked = cellState[i] === MARKED_EMPTY && solution.shaded[i] === 1;
+    if (!wronglyShaded && !wronglyMarked) continue;
+    const primary = ref(i, cols);
+    const message = wronglyShaded
+      ? `Something's off: ${primary} shouldn't be shaded — no shape covers it, so it should stay empty.`
+      : `Something's off: ${primary} shouldn't have been marked empty — it's actually part of a shape, so it should be shaded.`;
+    return { kind: 'error', cells: [i], message };
   }
-  if (cells.length === 0) return null;
-  const primary = ref(cells[0]!, cols);
-  const message =
-    kind === 'shaded'
-      ? `Something's off: ${primary} shouldn't be shaded.`
-      : `Something's off: ${primary} is actually part of a shape.`;
-  return { kind: 'error', cells, message };
+  return null;
 }
 
 /**
@@ -183,7 +175,7 @@ function findDeduceHint(puzzle: Puzzle, deduceResult: DeduceResult, cellState: U
       return kind === 'shade' ? cellState[c] !== SHADED : cellState[c] !== MARKED_EMPTY;
     });
     if (undecided.length === 0) continue;
-    const cells = undecided.slice(0, 2);
+    const cells = undecided.slice(0, 1);
     const message = buildStepMessage(step, kind, cells[0]!, cols);
     return { kind, cells, message };
   }

@@ -45,7 +45,7 @@ describe('computeHint', () => {
     const hint = computeHint(SAMPLE, cellState);
     expect(hint).not.toBeNull();
     expect(hint!.kind).toBe('error');
-    expect(hint!.cells).toContain(badCell);
+    expect(hint!.cells).toEqual([badCell]); // one cell at a time
     expect(hint!.message).toMatch(CELL_REF);
     expect(hint!.message).toMatch(/shouldn't be shaded/);
   });
@@ -59,8 +59,9 @@ describe('computeHint', () => {
 
     const hint = computeHint(SAMPLE, cellState);
     expect(hint!.kind).toBe('error');
-    expect(hint!.cells).toContain(badCell);
+    expect(hint!.cells).toEqual([badCell]); // one cell at a time
     expect(hint!.message).toMatch(CELL_REF);
+    expect(hint!.message).toMatch(/shouldn't have been marked empty/);
     expect(hint!.message).toMatch(/part of a shape/);
   });
 
@@ -69,8 +70,7 @@ describe('computeHint', () => {
     const hint = computeHint(SAMPLE, cellState);
     expect(hint).not.toBeNull();
     expect(['shade', 'exclude']).toContain(hint!.kind);
-    expect(hint!.cells.length).toBeGreaterThan(0);
-    expect(hint!.cells.length).toBeLessThanOrEqual(2);
+    expect(hint!.cells.length).toBe(1); // one cell at a time
     expect(hint!.message.length).toBeGreaterThan(0);
     expect(hint!.message).toMatch(CELL_REF);
     // Every highlighted cell must be one the player can actually act on.
