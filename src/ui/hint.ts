@@ -219,8 +219,15 @@ function findErrorHint(cellState: Uint8Array, solution: Solution, cols: number):
  * say to the player: at least one of its cells is "undecided" (shade-kind: not
  * already SHADED; exclude-kind: not already MARKED_EMPTY) *and* actionable (not
  * a clue cell). `placement-filtering` emits no step but is skipped explicitly
- * as documented bookkeeping regardless. Because the engine emits cheap steps
- * before expensive ones, the first such step is the cheapest available.
+ * as documented bookkeeping regardless.
+ *
+ * Emission order matters for soundness, not just difficulty: the engine emits
+ * cheap steps before expensive ones, so the first actionable step is the
+ * cheapest available — AND, in a probing pass, the probe step is emitted BEFORE
+ * the cheap rules it cascades into, so returning the first actionable step
+ * yields the seed-valid probe rather than a cascade step that only holds once
+ * the probe's forced cell is in (which wouldn't reproduce from the player's
+ * board). Do not "optimise" this to pick the lowest-tier step globally.
  */
 function firstActionableStep(steps: readonly Step[], puzzle: Puzzle, cellState: Uint8Array, cols: number): Hint | null {
   for (const step of steps) {
@@ -250,15 +257,21 @@ function seedState(model: Model, cellState: Uint8Array) {
 
 /**
  * Re-run the constraint engine from the player's *current* board and return the
- * cheapest deduction available from here. Escalates lazily: a first pass with
- * probing OFF finds any cheap/medium deduction (tiers up to clue-candidate) —
- * the common case, and fast; only if that decides nothing new does a second
- * pass turn on depth-2 look-ahead probing, so the player is shown a
- * contradiction hint *only* when genuinely nothing simpler exists from this
- * position. Returns null if even probing adds nothing (or the budget is hit).
+ * clearest deduction available from here. Escalates lazily by probe depth:
+ *  - depth 0: any cheap/medium deduction (tiers up to clue-candidate) — the
+ *    common case, and fast;
+ *  - depth 1: a full failed-literal sweep (`probe-forcing`). Cheaper than depth
+ *    2, so the common "one what-if finishes it" case never pays for the
+ *    quadratic sweep — this is the win for hint latency;
+ *  - depth 2: only if depth 1 still decides nothing (genuinely stuck) does the
+ *    O(cells² × propagation) `probe-forcing-2` sweep run, under the wall-clock
+ *    budget.
+ * `firstActionableStep` returns the seed-valid probe (emitted before the cheap
+ * rules it cascades into — see its note). Returns null if even depth-2 probing
+ * adds nothing (or the budget is hit).
  */
 function findDeduceHint(puzzle: Puzzle, model: Model, cellState: Uint8Array, cols: number): Hint | null {
-  for (const probeDepth of [0, 2] as const) {
+  for (const probeDepth of [0, 1, 2] as const) {
     const state = seedState(model, cellState);
     const result = propagateToFixpoint(model, state, {
       coverAnalysis: true,
