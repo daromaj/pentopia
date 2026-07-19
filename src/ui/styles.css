@@ -160,6 +160,27 @@ body {
   padding: 0.25rem 0.35rem;
 }
 
+.generate-progress {
+  flex: 1 1 6rem;
+  min-width: 4rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.generate-progress[hidden] {
+  display: none;
+}
+
+.generate-progress-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.12s linear;
+}
+
 button,
 select {
   padding: 0.4rem 0.7rem;

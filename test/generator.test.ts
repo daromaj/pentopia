@@ -101,7 +101,7 @@ describe('generator: difficulty knob', () => {
 describe('generator: expert difficulty', () => {
   // Seeds hand-verified (experiments/tune-expert-floor.ts + ad-hoc sweeps) to
   // generate an 8x8 expert puzzle in well under 3s each with today's defaults
-  // (maxAttempts=400, timeBudgetMs=20000) — expert's floor is a deliberate
+  // (maxAttempts=400, timeBudgetMs=60000) — expert's floor is a deliberate
   // tail event (see generate.ts's expertProbeFloor doc comment), so most
   // seeds work but some take much longer or time out; these three don't.
   const fastSeeds = [5, 8, 11];

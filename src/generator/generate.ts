@@ -36,7 +36,7 @@
  * deduce()'s depth-2 probe-forcing-2 sweep only engages once depth-1 stalls,
  * but with expert's ceiling raised to tier 7, minimize's per-removal deduce()
  * calls hit exactly that stall constantly — it's the hot path, not a rare
- * escape hatch. `opts.timeBudgetMs` (default ~20s for expert, effectively
+ * escape hatch. `opts.timeBudgetMs` (default ~60s for expert, effectively
  * unbounded for the other tiers) bounds this: minimizeClues checks the
  * deadline before each candidate removal and, once passed, stops removing
  * clues and returns the puzzle as-is — a partially-minimized clue set can
@@ -79,7 +79,7 @@ export interface GenerateOptions {
    * it's checked again at the top of the attempt loop, generation throws the
    * usual "exhausted attempts" error rather than grinding on. Default:
    * effectively unbounded (`Infinity`) for easy/medium/hard — their ceilings
-   * never reach the expensive depth-2 probe path — and ~20_000ms for expert,
+   * never reach the expensive depth-2 probe path — and ~60_000ms for expert,
    * where depth-2 deduce() calls are the hot path during minimize.
    */
   readonly timeBudgetMs?: number;
@@ -109,7 +109,7 @@ const DEFAULT_TIME_BUDGET_MS: Record<Difficulty, number> = {
   easy: Infinity,
   medium: Infinity,
   hard: Infinity,
-  expert: 20_000,
+  expert: 60_000,
 };
 
 /**
@@ -120,8 +120,8 @@ const DEFAULT_TIME_BUDGET_MS: Record<Difficulty, number> = {
  * ~30% clear the expert probe floor at all, and per-attempt cost is
  * ~130-190ms, so 50 attempts (50-100 were observed needed at 8x8 in practice)
  * frequently starved out before finding one. 400 gives that headroom — in
- * practice `timeBudgetMs` (20s default) is what actually stops an unlucky
- * run, since 400 attempts at ~150ms each would take ~60s.
+ * practice `timeBudgetMs` (60s default) is what actually stops an unlucky
+ * run before the attempt cap on larger boards, where per-attempt cost climbs.
  */
 const DEFAULT_MAX_ATTEMPTS: Record<Difficulty, number> = {
   easy: 50,

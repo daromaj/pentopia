@@ -115,7 +115,7 @@ clueCount.dataset.hook = 'clue-count';
 const sizeSelect = document.createElement('select');
 sizeSelect.dataset.hook = 'generate-size';
 sizeSelect.title = 'New puzzle size';
-for (const n of [6, 8, 10]) {
+for (const n of [6, 8, 10, 12, 14, 16]) {
   const opt = document.createElement('option');
   opt.value = String(n);
   opt.textContent = `${n}×${n}`;
@@ -144,9 +144,22 @@ const editGroup = document.createElement('div');
 editGroup.className = 'action-group';
 editGroup.append(undoBtn, redoBtn, checkBtn, hintBtn, resetBtn, clueCount);
 
+// Generation-progress bar: shown only while the worker is grinding. Expert
+// puzzles (and bigger boards) can take up to a minute, so a visible indicator
+// beats a frozen "Generating…" label. See wireGenerateProgress below.
+const generateProgress = document.createElement('div');
+generateProgress.className = 'generate-progress';
+generateProgress.dataset.hook = 'generate-progress';
+generateProgress.hidden = true;
+generateProgress.setAttribute('role', 'progressbar');
+generateProgress.setAttribute('aria-label', 'Generating puzzle');
+const generateProgressFill = document.createElement('div');
+generateProgressFill.className = 'generate-progress-fill';
+generateProgress.appendChild(generateProgressFill);
+
 const generateGroup = document.createElement('div');
 generateGroup.className = 'action-group generate-group';
-generateGroup.append(sizeSelect, difficultySelect, generateBtn);
+generateGroup.append(sizeSelect, difficultySelect, generateBtn, generateProgress);
 
 actions.append(editGroup, generateGroup);
 toolbar.append(appTitle, urlbarMount, actions);
@@ -611,6 +624,51 @@ hintBtn.addEventListener('click', () => {
 
 let generatorWorker: Worker | null = null;
 
+/**
+ * Time-based generation progress. We can't get true progress out of the
+ * worker (generatePuzzle is one blocking call), so we animate an asymptotic
+ * bar — `1 - exp(-t/tau)` — that races toward, but never reaches, 100% until
+ * the worker actually returns. `tau` scales with board area and jumps for
+ * expert (whose budget is a full minute), so the pace roughly tracks how long
+ * a run of that shape really takes without ever lying about being "done".
+ */
+let progressRaf: number | null = null;
+
+function stopProgress(): void {
+  if (progressRaf !== null) {
+    cancelAnimationFrame(progressRaf);
+    progressRaf = null;
+  }
+}
+
+function startProgress(size: number, difficulty: 'easy' | 'medium' | 'hard' | 'expert'): void {
+  stopProgress();
+  const cells = size * size;
+  const tauMs = (difficulty === 'expert' ? 18_000 : 1_200) * (cells / 64);
+  const t0 = performance.now();
+  generateProgress.hidden = false;
+  generateProgressFill.style.width = '0%';
+  const tick = (): void => {
+    const t = performance.now() - t0;
+    // Cap the animation at 95% — the snap to 100% happens only on real completion.
+    const pct = Math.min(95, (1 - Math.exp(-t / tauMs)) * 100);
+    generateProgressFill.style.width = `${pct.toFixed(1)}%`;
+    generateProgress.setAttribute('aria-valuenow', String(Math.round(pct)));
+    progressRaf = requestAnimationFrame(tick);
+  };
+  progressRaf = requestAnimationFrame(tick);
+}
+
+function finishProgress(): void {
+  stopProgress();
+  generateProgressFill.style.width = '100%';
+  // Let the fill visibly complete before hiding.
+  setTimeout(() => {
+    generateProgress.hidden = true;
+    generateProgressFill.style.width = '0%';
+  }, 250);
+}
+
 function showGenerateError(message: string): void {
   banner.replaceChildren();
   banner.classList.remove('banner-solved', 'banner-hint', 'banner-challenge', 'has-close');
@@ -632,10 +690,12 @@ generateBtn.addEventListener('click', () => {
 
   generateBtn.disabled = true;
   generateBtn.textContent = 'Generating…';
+  startProgress(size, difficulty);
 
   worker.onmessage = (ev: MessageEvent<WorkerResponse>) => {
     generateBtn.disabled = false;
     generateBtn.textContent = 'New puzzle';
+    finishProgress();
     const msg = ev.data;
     if (msg.type === 'error') {
       showGenerateError(msg.message);
@@ -650,6 +710,7 @@ generateBtn.addEventListener('click', () => {
   worker.onerror = (ev) => {
     generateBtn.disabled = false;
     generateBtn.textContent = 'New puzzle';
+    finishProgress();
     showGenerateError(ev.message || 'worker error');
   };
 
