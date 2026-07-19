@@ -789,36 +789,38 @@ function ruleProbe(ctx: Ctx, opts: ProbeInnerOpts, depth: 1 | 2): void {
       return;
     }
 
-    // Decided cells before the what-if; the difference after propagation (minus
-    // the assumed cell itself) is the forced-move chain length recorded below.
-    const baseDecided = state.shaded.popcount() + state.excluded.popcount();
-
     const ifShaded = cloneState(state);
     ifShaded.shaded.set(u);
     const shadeResult = propagateToFixpoint(model, ifShaded, inner);
-    const shadeContra = shadeResult.status === 'contradiction';
-
-    const ifExcluded = cloneState(state);
-    ifExcluded.excluded.set(u);
-    const excludeResult = propagateToFixpoint(model, ifExcluded, inner);
-    const excludeContra = excludeResult.status === 'contradiction';
-
-    if (shadeContra && excludeContra) {
-      ctx.contradiction = `cell ${u}: both shading and leaving it unshaded lead to a contradiction`;
-      return;
-    }
-    if (shadeContra) {
+    if (shadeResult.status === 'contradiction') {
+      // Shading u is impossible → u must be excluded. We do NOT also probe the
+      // "leave u unshaded" branch: if that branch ALSO contradicts (the board is
+      // unsatisfiable), excluding u here reproduces it on the very next fixpoint
+      // pass — the outer propagation over the now-excluded u is at least as
+      // strong as this probe's inner propagation, so it re-derives the same
+      // contradiction. Skipping the second what-if is what halves probe cost on
+      // every force, and it compounds through the depth-2 → depth-1 nesting.
       if (exclude(ctx, u)) {
-        // Forced-move chain length: extra cells the what-if decided before it
-        // broke (the +1 assumed cell excluded).
+        // Decided cells before the what-if; the difference after propagation
+        // (minus the +1 assumed cell) is the forced-move chain length. `state`
+        // is untouched until this exclude(), so measuring it here matches the
+        // old pre-clone reading. Only paid on an actual force, not every probe.
+        const baseDecided = state.shaded.popcount() + state.excluded.popcount() - 1;
         const probeChain = Math.max(0, ifShaded.shaded.popcount() + ifShaded.excluded.popcount() - baseDecided - 1);
         // Carry the inner contradiction's reason (which concrete clue/cell broke)
         // so the hint layer can tell the player *why*, not just *that*, it breaks.
         ctx.steps.push({ rule: ruleId, kind: 'exclude', cells: [u], probeChain, detail: `shading cell ${u} forces a contradiction (depth ${depth}): ${shadeResult.reason}` });
         if (depth === 2) return; // fall back to the cheap fixpoint before more depth-2 work
       }
-    } else if (excludeContra) {
+      continue;
+    }
+
+    const ifExcluded = cloneState(state);
+    ifExcluded.excluded.set(u);
+    const excludeResult = propagateToFixpoint(model, ifExcluded, inner);
+    if (excludeResult.status === 'contradiction') {
       if (shade(ctx, u)) {
+        const baseDecided = state.shaded.popcount() + state.excluded.popcount() - 1;
         const probeChain = Math.max(0, ifExcluded.shaded.popcount() + ifExcluded.excluded.popcount() - baseDecided - 1);
         ctx.steps.push({ rule: ruleId, kind: 'shade', cells: [u], probeChain, detail: `leaving cell ${u} unshaded forces a contradiction (depth ${depth}): ${excludeResult.reason}` });
         if (depth === 2) return;
