@@ -8,17 +8,20 @@
  *     generated puzzle, but the player accepts arbitrary pasted URLs), say so.
  *  2. Point out any mistake already on the board (fixing errors before new
  *     information is the teaching-correct order).
- *  3. Otherwise walk the human-style deducer's step log (`solver/deduce.ts`)
- *     for the first step that still has something new to tell the player.
- *  4. If the deducer's steps are exhausted but cells remain undecided
- *     (probe-heavy boards), fall back to the (memoized) unique solution for
- *     one more cell — honest, if less pedagogical.
+ *  3. Otherwise re-run the constraint engine SEEDED FROM THE PLAYER'S ACTUAL
+ *     BOARD (not a fixed empty-board trajectory) and return the *cheapest*
+ *     deduction available from here — cheap rules first, escalating to
+ *     look-ahead probing only when nothing simpler decides a new cell. This is
+ *     what makes "Hint" always offer the easiest legal next move from wherever
+ *     the player actually is, instead of the next step on a canonical path.
+ *  4. If even probing is exhausted but cells remain undecided (or the work
+ *     budget is hit), fall back to the unique solution for one more cell.
  *  5. If nothing is left to say, the board is correct so far.
  *
- * Solving `puzzle` (`solve`) and deducing it (`deduce`) are both re-run at
- * most once per distinct puzzle: results are memoized in a module-level Map
- * keyed by the puzzle's canonical share-URL string (`encodeUrl`), since the
- * player may click "Hint" repeatedly on the same board.
+ * Solving `puzzle` (`solve`) is memoized per distinct puzzle (keyed by the
+ * canonical share-URL). The board-seeded deduction depends on `cellState`, so
+ * it is recomputed as the board changes; a small single-slot memo keyed by
+ * (puzzle, board) keeps repeated "Hint" clicks on an unchanged board instant.
  *
  * Cell-reference convention: `ref()` below prints `r<row>c<col>` **1-indexed**
  * for humans. Note this differs from `solver/deduce.ts`'s `explainSteps`,
@@ -30,8 +33,10 @@ import { NO_CLUE } from '../core/types';
 import type { Puzzle, Solution } from '../core/types';
 import { solve } from '../solver/search';
 import type { SolveResult } from '../solver/search';
-import { deduce } from '../solver/deduce';
-import type { DeduceResult } from '../solver/deduce';
+import { buildModel } from '../solver/model';
+import type { Model } from '../solver/model';
+import { initState } from '../solver/state';
+import { propagateToFixpoint } from '../solver/propagate';
 import type { RuleId, Step } from '../solver/propagate';
 import { SHADED, MARKED_EMPTY, UNTOUCHED } from './state';
 
@@ -42,28 +47,38 @@ export interface Hint {
   readonly message: string;
 }
 
+/**
+ * Wall-clock budget for the board-seeded deduction. The cheap (no-probe) pass
+ * is fast and handles the common case; this only bounds the escalated
+ * look-ahead pass, so a genuinely stuck hard board can't freeze the UI. Matches
+ * `deduce()`'s own budget.
+ */
+const HINT_BUDGET_MS = 30_000;
+
 interface CacheEntry {
   readonly solveResult: SolveResult;
-  /** Present only when `solveResult` found exactly one solution (deducing an ambiguous/unsolvable puzzle is meaningless here). */
-  readonly deduceResult: DeduceResult | null;
+  /** Present only when `solveResult` found exactly one solution — the engine model reused to deduce from the player's board. */
+  readonly model: Model | null;
 }
 
-/** Solve+deduce cache, keyed by the puzzle's canonical share-URL string. Exported read-only for tests that want to confirm a repeat call doesn't re-solve. */
+/** Per-puzzle solve/model cache, keyed by the puzzle's canonical share-URL string. Independent of board state. */
 const cache = new Map<string, CacheEntry>();
+
+/** Single-slot memo for the board-seeded hint so repeated clicks on an unchanged board don't recompute. Not counted by `_hintCacheSizeForTests`. */
+let lastHint: { key: string; hint: Hint | null } | null = null;
 
 /** Test-only: current number of distinct puzzles memoized (never re-solved on a repeat `computeHint` call for the same puzzle). */
 export function _hintCacheSizeForTests(): number {
   return cache.size;
 }
 
-function getCacheEntry(puzzle: Puzzle): CacheEntry {
-  const key = encodeUrl(puzzle);
+function getCacheEntry(puzzle: Puzzle, key: string): CacheEntry {
   let entry = cache.get(key);
   if (!entry) {
     const solveResult = solve(puzzle, { maxSolutions: 2 });
     const unique = solveResult.solutions.length === 1 && solveResult.complete;
-    const deduceResult = unique ? deduce(puzzle) : null;
-    entry = { solveResult, deduceResult };
+    const model = unique ? buildModel(puzzle) : null;
+    entry = { solveResult, model };
     cache.set(key, entry);
   }
   return entry;
@@ -196,15 +211,15 @@ function findErrorHint(cellState: Uint8Array, solution: Solution, cols: number):
 }
 
 /**
- * Walk the deducer's step log in order for the first step that still has
- * something new to say to the player: at least one of its cells is
- * "undecided" (shade-kind: not already SHADED; exclude-kind: not already
- * MARKED_EMPTY) *and* actionable (not a clue cell). `placement-filtering`
- * never actually emits a step, but is skipped explicitly as documented
- * bookkeeping regardless.
+ * The first step in an application-ordered log that still has something new to
+ * say to the player: at least one of its cells is "undecided" (shade-kind: not
+ * already SHADED; exclude-kind: not already MARKED_EMPTY) *and* actionable (not
+ * a clue cell). `placement-filtering` emits no step but is skipped explicitly
+ * as documented bookkeeping regardless. Because the engine emits cheap steps
+ * before expensive ones, the first such step is the cheapest available.
  */
-function findDeduceHint(puzzle: Puzzle, deduceResult: DeduceResult, cellState: Uint8Array, cols: number): Hint | null {
-  for (const step of deduceResult.steps) {
+function firstActionableStep(steps: readonly Step[], puzzle: Puzzle, cellState: Uint8Array, cols: number): Hint | null {
+  for (const step of steps) {
     if (step.rule === 'placement-filtering') continue;
     const kind = stepKind(step);
     const undecided = step.cells.filter((c) => {
@@ -215,6 +230,40 @@ function findDeduceHint(puzzle: Puzzle, deduceResult: DeduceResult, cellState: U
     const cells = undecided.slice(0, 1);
     const message = buildStepMessage(step, kind, cells[0]!, cols);
     return { kind, cells, message };
+  }
+  return null;
+}
+
+/** A fresh solve-state seeded from the player's actual board: their shaded cells shaded, their marked-empty cells excluded, everything else unknown. Safe only after `findErrorHint` has cleared the board of mistakes (so the seed is a correct partial assignment the propagators can extend soundly). */
+function seedState(model: Model, cellState: Uint8Array) {
+  const state = initState(model);
+  for (let i = 0; i < cellState.length; i++) {
+    if (cellState[i] === SHADED) state.shaded.set(i);
+    else if (cellState[i] === MARKED_EMPTY) state.excluded.set(i);
+  }
+  return state;
+}
+
+/**
+ * Re-run the constraint engine from the player's *current* board and return the
+ * cheapest deduction available from here. Escalates lazily: a first pass with
+ * probing OFF finds any cheap/medium deduction (tiers up to clue-candidate) —
+ * the common case, and fast; only if that decides nothing new does a second
+ * pass turn on depth-2 look-ahead probing, so the player is shown a
+ * contradiction hint *only* when genuinely nothing simpler exists from this
+ * position. Returns null if even probing adds nothing (or the budget is hit).
+ */
+function findDeduceHint(puzzle: Puzzle, model: Model, cellState: Uint8Array, cols: number): Hint | null {
+  for (const probeDepth of [0, 2] as const) {
+    const state = seedState(model, cellState);
+    const result = propagateToFixpoint(model, state, {
+      coverAnalysis: true,
+      clueCandidate: true,
+      probeDepth,
+      deadline: performance.now() + HINT_BUDGET_MS,
+    });
+    const hint = firstActionableStep(result.steps, puzzle, cellState, cols);
+    if (hint) return hint;
   }
   return null;
 }
@@ -230,7 +279,19 @@ function findDeduceHint(puzzle: Puzzle, deduceResult: DeduceResult, cellState: U
 export function computeHint(puzzle: Puzzle, cellState: Uint8Array): Hint | null {
   if (cellState.length !== puzzle.cols * puzzle.rows) return null;
 
-  const { solveResult, deduceResult } = getCacheEntry(puzzle);
+  const key = encodeUrl(puzzle);
+  // Repeated "Hint" clicks on an unchanged board return the memoized result
+  // instead of re-running the (possibly probe-heavy) board-seeded deduction.
+  const memoKey = `${key}:${cellState.join('')}`;
+  if (lastHint && lastHint.key === memoKey) return lastHint.hint;
+
+  const hint = computeHintUncached(puzzle, cellState, key);
+  lastHint = { key: memoKey, hint };
+  return hint;
+}
+
+function computeHintUncached(puzzle: Puzzle, cellState: Uint8Array, key: string): Hint | null {
+  const { solveResult, model } = getCacheEntry(puzzle, key);
   const unique = solveResult.solutions.length === 1 && solveResult.complete;
   if (!unique) {
     return {
@@ -245,10 +306,11 @@ export function computeHint(puzzle: Puzzle, cellState: Uint8Array): Hint | null 
   const errorHint = findErrorHint(cellState, solution, cols);
   if (errorHint) return errorHint;
 
-  const deduceHint = findDeduceHint(puzzle, deduceResult!, cellState, cols);
+  const deduceHint = findDeduceHint(puzzle, model!, cellState, cols);
   if (deduceHint) return deduceHint;
 
-  // Deducer exhausted; fall back to the unique solution for one more cell.
+  // Deduction (even probing) exhausted or over budget; fall back to the unique
+  // solution for one more cell.
   for (let i = 0; i < cellState.length; i++) {
     if (!isActionable(puzzle, i)) continue;
     if (cellState[i] !== UNTOUCHED) continue;

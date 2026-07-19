@@ -140,6 +140,29 @@ describe('computeHint', () => {
     expect(hint!.message.match(/r\d+c\d+/g)!.length).toBeGreaterThanOrEqual(2);
   }, 30_000);
 
+  it('re-deduces from the actual board: a cell the canonical log can only probe-force gets a cheaper hint once the rest of the board is known', () => {
+    // The old hint walked a fixed empty-board log, so this cell would surface as
+    // a look-ahead probe. The new hint re-deduces from the player's board, where
+    // — with everything else known — the cell is forced by a cheap rule instead.
+    const d = deduce(SAMPLE);
+    const probeStep = d.steps.find((s) => s.rule === 'probe-forcing' || s.rule === 'probe-forcing-2');
+    expect(probeStep).toBeDefined();
+    const probeCell = probeStep!.cells[0]!;
+
+    const solution = uniqueSolution(SAMPLE);
+    const cellState = new Uint8Array(SAMPLE.cols * SAMPLE.rows);
+    for (let i = 0; i < cellState.length; i++) {
+      if (SAMPLE.clues[i] !== NO_CLUE) continue;
+      if (i === probeCell) continue; // the only undecided cell
+      cellState[i] = solution.shaded[i] === 1 ? SHADED : MARKED_EMPTY;
+    }
+
+    const hint = computeHint(SAMPLE, cellState);
+    expect(hint).not.toBeNull();
+    expect(hint!.cells).toEqual([probeCell]);
+    expect(hint!.message).not.toMatch(/^Look ahead:/); // a cheaper rule, not a probe
+  }, 30_000);
+
   it('malformed input (cellState length mismatch) returns null rather than throwing', () => {
     const puzzle = mkPuzzle(3, 3, {}, mono);
     expect(computeHint(puzzle, new Uint8Array(3))).toBeNull();
