@@ -21,8 +21,11 @@ See [`goal.md`](goal.md) for the original idea and direction.
 - **Favorites & resume**: star puzzles, and the app reopens your last
   puzzle exactly as you left it (stored locally). Each favorite has a PR
   button that pre-fills a GitHub commit adding it to [`puzzles/`](puzzles/).
-- **Installable**: on Android, Chrome menu → *Add to Home screen* runs it
-  fullscreen as an app (network still required — no offline cache yet).
+- **Installable & offline**: on Android, Chrome menu → *Add to Home
+  screen* runs it fullscreen as an app. A service worker caches the app
+  shell and every generated asset, so once it's been opened online once
+  it keeps working with no network at all — including generating new
+  puzzles, which happens entirely in-browser.
 
 Puzzles deep-link via `?p=` (or a hash) using puzz.link's own encoding, so
 any Pentopia URL works in both players:

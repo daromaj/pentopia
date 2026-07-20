@@ -721,3 +721,14 @@ generateBtn.addEventListener('click', () => {
 });
 
 rerender();
+
+// --- Offline support --------------------------------------------------
+// Registered only in the built app (not the dev server, where it would
+// fight Vite's own module reloading). Registration failing (unsupported
+// browser, blocked by an extension, etc.) is never fatal — the game plays
+// fine online either way.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => {});
+  });
+}

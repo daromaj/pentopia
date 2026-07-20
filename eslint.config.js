@@ -9,7 +9,9 @@ export default [
     // node_modules/dist/.vite: build output and deps, never linted.
     // test/fixtures/pentopia.pzprjs.js: a verbatim vendor copy of pzprjs
     // test data (references pzprjs's own `ui` global) — not our source.
-    ignores: ['node_modules', 'dist', '.vite', 'test/fixtures/pentopia.pzprjs.js'],
+    // public/sw.js: hand-written service worker, plain JS running in the
+    // service worker global scope (self/caches/clients), not our TS graph.
+    ignores: ['node_modules', 'dist', '.vite', 'test/fixtures/pentopia.pzprjs.js', 'public/sw.js'],
   },
   {
     files: ['**/*.ts'],
