@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "gen": "tsx src/cli/generate.ts",
+    "penpa": "tsx src/cli/penpa.ts",
     "solve": "tsx src/cli/solve.ts",
     "lint": "eslint .",
     "format": "prettier --write ."

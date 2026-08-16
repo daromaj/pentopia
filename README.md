@@ -60,7 +60,14 @@ npm run dev                                    # player UI at localhost:5173
 npm test                                       # full suite (~170 tests)
 npm run gen -- --cols 8 --rows 8 --seed 1 --difficulty expert
 npm run solve -- "https://puzz.link/p?pentopia/10/10/2s9ziar5gbi6z6hai9s4//p"
+npm run penpa -- "https://swaroopg92.github.io/penpa-edit/#m=solve&p=..."
 ```
+
+`npm run penpa` imports a Pentopia puzzle drawn in
+[penpa-edit](https://swaroopg92.github.io/penpa-edit/) (its fragment is
+base64 + raw-deflate; the arrow clues live in the `arrow_cross` symbol
+layer) and prints the equivalent puzz.link string plus ready-to-open
+player links. Quote the URL — it contains `&` and `#`.
 
 CI runs tests + build on every push; pushes to `main` deploy to GitHub
 Pages automatically.
