@@ -28,6 +28,12 @@ export interface PlayState {
   strokeActive: boolean;
   /** The cell value being painted for the current stroke, chosen at stroke start. */
   strokePaintValue: CellValue | null;
+  /**
+   * Keyboard cursor cell index, or null while the player hasn't used the
+   * board yet — nothing is drawn until then, so mouse-only play looks exactly
+   * as it did before.
+   */
+  cursor: number | null;
 }
 
 const MAX_HISTORY = 200;
@@ -41,6 +47,7 @@ export function createPlayState(puzzle: Puzzle): PlayState {
     dirty: false,
     strokeActive: false,
     strokePaintValue: null,
+    cursor: null,
   };
 }
 
@@ -53,6 +60,7 @@ export function loadPuzzle(state: PlayState, puzzle: Puzzle): void {
   state.dirty = false;
   state.strokeActive = false;
   state.strokePaintValue = null;
+  state.cursor = null;
 }
 
 export function isClueCell(state: PlayState, i: number): boolean {
@@ -95,6 +103,50 @@ export function continueStroke(state: PlayState, i: number): boolean {
   if (isClueCell(state, i)) return false;
   if (state.cellState[i] === state.strokePaintValue) return false;
   state.cellState[i] = state.strokePaintValue;
+  return true;
+}
+
+/**
+ * Put the keyboard cursor on cell `i` (clamped to the board; out-of-range
+ * indices are ignored). Returns whether it moved.
+ */
+export function setCursor(state: PlayState, i: number): boolean {
+  if (i < 0 || i >= state.cellState.length) return false;
+  if (state.cursor === i) return false;
+  state.cursor = i;
+  return true;
+}
+
+/**
+ * Move the keyboard cursor by (dx,dy) cells, clamped at the board edges (no
+ * wrap-around — running into an edge parks there instead of teleporting to
+ * the far side). With no cursor placed yet, the first arrow press just puts
+ * it on the top-left cell. Clue cells are *not* skipped: the cursor may rest
+ * on them, they simply refuse to take a value. Returns whether it moved.
+ */
+export function moveCursor(state: PlayState, dx: number, dy: number): boolean {
+  const { cols, rows } = state.puzzle;
+  if (state.cursor === null) return setCursor(state, 0);
+  const x = state.cursor % cols;
+  const y = Math.floor(state.cursor / cols);
+  const nx = Math.min(cols - 1, Math.max(0, x + dx));
+  const ny = Math.min(rows - 1, Math.max(0, y + dy));
+  return setCursor(state, ny * cols + nx);
+}
+
+/**
+ * Keyboard entry on cell `i`: set it to `value`, or back to untouched if it
+ * already holds it — so the same key pressed twice undoes itself, instead of
+ * making the player cycle through the third state to get back. Clue cells are
+ * inert, exactly as with strokes. One history snapshot per call.
+ */
+export function toggleCellValue(state: PlayState, i: number, value: CellValue): boolean {
+  if (isClueCell(state, i)) return false;
+  const next = state.cellState[i] === value ? UNTOUCHED : value;
+  if (state.cellState[i] === next) return false;
+  pushHistory(state);
+  state.cellState[i] = next;
+  state.dirty = true;
   return true;
 }
 

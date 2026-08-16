@@ -12,6 +12,9 @@ import {
   undo,
   redo,
   computeShadedComponents,
+  moveCursor,
+  setCursor,
+  toggleCellValue,
   FAILCODE_MESSAGES,
   UNTOUCHED,
   SHADED,
@@ -131,6 +134,79 @@ describe('undo/redo', () => {
     expect(state.cellState.length).toBe(16);
     expect(state.undoStack.length).toBe(0);
     expect(state.redoStack.length).toBe(0);
+  });
+});
+
+describe('keyboard cursor', () => {
+  it('starts unplaced; the first move puts it on the top-left cell', () => {
+    const state = createPlayState(makePuzzle(3, 3));
+    expect(state.cursor).toBeNull();
+    expect(moveCursor(state, 1, 0)).toBe(true);
+    expect(state.cursor).toBe(0);
+  });
+
+  it('moves by one cell and clamps at the edges instead of wrapping', () => {
+    const state = createPlayState(makePuzzle(3, 3));
+    setCursor(state, 4); // center
+    moveCursor(state, 1, 0);
+    expect(state.cursor).toBe(5);
+    moveCursor(state, 0, 1);
+    expect(state.cursor).toBe(8); // bottom-right corner
+
+    expect(moveCursor(state, 1, 0)).toBe(false); // already at the right edge
+    expect(moveCursor(state, 0, 1)).toBe(false); // already at the bottom edge
+    expect(state.cursor).toBe(8);
+  });
+
+  it('setCursor ignores out-of-range indices', () => {
+    const state = createPlayState(makePuzzle(3, 3));
+    expect(setCursor(state, 9)).toBe(false);
+    expect(setCursor(state, -1)).toBe(false);
+    expect(state.cursor).toBeNull();
+  });
+
+  it('loadPuzzle unplaces the cursor', () => {
+    const state = createPlayState(makePuzzle(3, 3));
+    setCursor(state, 8);
+    loadPuzzle(state, makePuzzle(4, 4));
+    expect(state.cursor).toBeNull();
+  });
+});
+
+describe('toggleCellValue (keyboard entry)', () => {
+  it('sets the value, and the same value again clears back to untouched', () => {
+    const state = createPlayState(makePuzzle(3, 3));
+    expect(toggleCellValue(state, 4, SHADED)).toBe(true);
+    expect(state.cellState[4]).toBe(SHADED);
+    expect(toggleCellValue(state, 4, SHADED)).toBe(true);
+    expect(state.cellState[4]).toBe(UNTOUCHED);
+  });
+
+  it('switches straight between shaded and marked-empty without cycling through untouched', () => {
+    const state = createPlayState(makePuzzle(3, 3));
+    toggleCellValue(state, 0, SHADED);
+    toggleCellValue(state, 0, MARKED_EMPTY);
+    expect(state.cellState[0]).toBe(MARKED_EMPTY);
+    toggleCellValue(state, 0, SHADED);
+    expect(state.cellState[0]).toBe(SHADED);
+  });
+
+  it('is inert on clue cells and takes no history snapshot', () => {
+    const state = createPlayState(makePuzzle(3, 3, [4]));
+    expect(toggleCellValue(state, 4, SHADED)).toBe(false);
+    expect(state.cellState[4]).toBe(UNTOUCHED);
+    expect(state.undoStack.length).toBe(0);
+  });
+
+  it('each keypress is one undoable step', () => {
+    const state = createPlayState(makePuzzle(3, 3));
+    toggleCellValue(state, 0, SHADED);
+    toggleCellValue(state, 1, MARKED_EMPTY);
+    expect(undo(state)).toBe(true);
+    expect(state.cellState[1]).toBe(UNTOUCHED);
+    expect(state.cellState[0]).toBe(SHADED);
+    expect(undo(state)).toBe(true);
+    expect(state.cellState[0]).toBe(UNTOUCHED);
   });
 });
 

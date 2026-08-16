@@ -211,6 +211,21 @@ export function renderBoard(host: HTMLElement, state: PlayState, opts: RenderOpt
   }
   svg.appendChild(grid);
 
+  // Keyboard cursor, above the grid lines so it stays crisp on any cell. A
+  // bare outline (no fill) — it must never read as shading or as a mark.
+  if (state.cursor !== null && state.cursor >= 0 && state.cursor < cols * rows) {
+    const inset = CELL * 0.08;
+    svg.appendChild(
+      svgEl('rect', {
+        x: (state.cursor % cols) * CELL + inset,
+        y: Math.floor(state.cursor / cols) * CELL + inset,
+        width: CELL - inset * 2,
+        height: CELL - inset * 2,
+        class: 'cell-cursor',
+      }),
+    );
+  }
+
   svg.appendChild(svgEl('rect', { x: 0, y: 0, width: w, height: h, class: 'board-outline' }));
 
   // Swap only the previous board SVG: celebration overlays (canvas/stamp)

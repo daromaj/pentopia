@@ -6,7 +6,18 @@
  * pointer without caring whether the SVG element itself was just replaced.
  */
 
-import { continueStroke, endStroke, redo, startStroke, undo, MARKED_EMPTY } from './state';
+import {
+  continueStroke,
+  endStroke,
+  moveCursor,
+  redo,
+  setCursor,
+  startStroke,
+  toggleCellValue,
+  undo,
+  MARKED_EMPTY,
+  SHADED,
+} from './state';
 import type { PlayState } from './state';
 import { CELL } from './render';
 
@@ -44,6 +55,9 @@ export function attachBoardInteraction(host: HTMLElement, state: PlayState, onCh
     if (i === null) return;
     const forced = e.button === 2 || activePointers.size >= 2 ? MARKED_EMPTY : undefined;
     painting = true;
+    // Keep the keyboard cursor where the player last touched, so switching
+    // from mouse to keys continues from the same cell instead of jumping.
+    setCursor(state, i);
     startStroke(state, i, forced);
     host.setPointerCapture(e.pointerId);
     onChange();
@@ -66,22 +80,76 @@ export function attachBoardInteraction(host: HTMLElement, state: PlayState, onCh
   host.addEventListener('pointercancel', finishPointer);
 }
 
-/** Ctrl/Cmd+Z to undo, Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y to redo. */
-export function attachKeyboardShortcuts(state: PlayState, onChange: () => void): void {
+const ARROW_DELTAS: Record<string, readonly [number, number]> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+};
+
+/**
+ * Whether the key event came from somewhere the player is typing (the URL bar,
+ * the size/difficulty selects, a dialog field) — bare letter and arrow keys
+ * belong to that control, not the board.
+ */
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+}
+
+/**
+ * Board keyboard control, attached once to the window:
+ *
+ * - Ctrl/Cmd+Z undo, Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y redo.
+ * - Arrows move the cursor (clamped at the edges; first press places it).
+ * - `x` shades the cursor cell, `z` marks it empty — each toggles back to
+ *   untouched when the cell already holds that value.
+ *
+ * `onEdit` runs after a board mutation; `onCursorMove` (defaults to `onEdit`)
+ * after a cursor-only move, so the caller can do the cheap thing — a plain
+ * re-render — without the full post-edit pipeline clearing the hint banner
+ * just because the player looked at another cell.
+ */
+export function attachKeyboardShortcuts(
+  state: PlayState,
+  onEdit: () => void,
+  onCursorMove: () => void = onEdit,
+): void {
   window.addEventListener('keydown', (e) => {
-    const mod = e.ctrlKey || e.metaKey;
-    if (!mod) return;
-    const key = e.key.toLowerCase();
-    if (key === 'z') {
-      e.preventDefault();
-      if (e.shiftKey) {
-        if (redo(state)) onChange();
-      } else if (undo(state)) {
-        onChange();
+    if (e.ctrlKey || e.metaKey) {
+      const key = e.key.toLowerCase();
+      if (key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          if (redo(state)) onEdit();
+        } else if (undo(state)) {
+          onEdit();
+        }
+      } else if (key === 'y') {
+        e.preventDefault();
+        if (redo(state)) onEdit();
       }
-    } else if (key === 'y') {
-      e.preventDefault();
-      if (redo(state)) onChange();
+      return;
     }
+    if (e.altKey || isTypingTarget(e.target)) return;
+
+    const delta = ARROW_DELTAS[e.key];
+    if (delta) {
+      e.preventDefault(); // arrows would otherwise scroll the page
+      if (moveCursor(state, delta[0], delta[1])) onCursorMove();
+      return;
+    }
+
+    const key = e.key.toLowerCase();
+    if (key !== 'x' && key !== 'z') return;
+    e.preventDefault();
+    // No cursor yet: the first keypress only places it, so a stray `x` can't
+    // paint a cell the player never aimed at.
+    if (state.cursor === null) {
+      if (setCursor(state, 0)) onCursorMove();
+      return;
+    }
+    if (toggleCellValue(state, state.cursor, key === 'x' ? SHADED : MARKED_EMPTY)) onEdit();
   });
 }

@@ -582,7 +582,9 @@ document.addEventListener('visibilitychange', () => {
 });
 
 attachBoardInteraction(boardHost, state, onBoardChange);
-attachKeyboardShortcuts(state, onBoardChange);
+// Cursor-only moves take the cheap path (plain re-render): they aren't edits,
+// so they must not clear the hint/Check banners or touch the save + clock.
+attachKeyboardShortcuts(state, onBoardChange, rerender);
 
 undoBtn.addEventListener('click', () => {
   if (undo(state)) onBoardChange();

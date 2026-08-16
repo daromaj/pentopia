@@ -14,6 +14,9 @@ See [`goal.md`](goal.md) for the original idea and direction.
 - **Generate** puzzles in the browser (6×6–10×10; easy / medium / hard /
   expert). Every generated puzzle is verified to have a **unique** solution
   reachable **without guessing**.
+- **Keyboard play**: arrows move a cursor, `x` shades the cell, `z` marks it
+  empty (pressing the same key again clears it); Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z
+  undo/redo.
 - **Hints** (learning mode): the deduction engine highlights the next
   logically forced cell and explains *why* — errors are pointed out first.
 - **Check** validates your board with the same rules puzz.link uses and

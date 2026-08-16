@@ -433,6 +433,18 @@ button:disabled {
   paint-order: stroke;
 }
 
+/* Keyboard cursor — a dashed outline with no fill, so it can sit on a shaded,
+   marked, or clue cell without changing what that cell reads as (a filled
+   highlight would). Dashes keep it distinct from the solid hint/failure
+   outlines at a glance. */
+.cell-cursor {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3;
+  stroke-dasharray: 7 5;
+  stroke-linecap: round;
+}
+
 .clue-arrow {
   fill: var(--arrow);
 }
