@@ -46,7 +46,7 @@ import { NO_CLUE } from '../core/types';
 import { PRESETS } from '../core/bank';
 import { validate } from '../core/validator';
 import { encodeUrl, decodeUrl } from '../core/codec/url';
-import { solve, solveModel } from '../solver/search';
+import { solveModel } from '../solver/search';
 import { deduceModel, type DeduceResult } from '../solver/deduce';
 import { buildModel } from '../solver/model';
 import type { RuleId } from '../solver/propagate';
@@ -54,7 +54,7 @@ import { createRng } from './rng';
 import { placeShapes } from './place';
 import { deriveMaximalClues } from './clues';
 import { minimizeClues } from './minimize';
-import { signatureOf, type RatedCandidate } from './flow';
+import { signatureOf, type FlowProfile, type RatedCandidate } from './flow';
 
 export type Difficulty = 'easy' | 'medium' | 'hard' | 'expert';
 
@@ -82,16 +82,19 @@ export interface GenerateOptions {
   readonly timeBudgetMs?: number;
   /** Optional diagnostics hook; it never changes candidate selection. */
   readonly observer?: GenerationObserver;
+  /** Biases only clue-removal order; candidate zero callers omit it for legacy stability. */
+  readonly flowProfile?: FlowProfile;
 }
 
 export type GeneratorPhase = 'placing-shapes' | 'checking-uniqueness' | 'minimizing';
 
 export interface GenerationObserver {
   onPhase?(phase: GeneratorPhase): void;
-  onSolve?(elapsedMs: number): void;
-  onDeduce?(elapsedMs: number): void;
+  onSolve?(elapsedMs: number, purpose?: 'gate' | 'codec'): void;
+  onDeduce?(elapsedMs: number, purpose?: 'gate' | 'scoring'): void;
   onRemoval?(accepted: boolean): void;
-  onModelBuilt?(elapsedMs: number): void;
+  onModelBuilt?(elapsedMs: number, purpose?: 'gate' | 'codec' | 'scoring'): void;
+  onScoring?(elapsedMs: number): void;
 }
 
 /** Frozen spacing for candidate RNG substreams; candidate zero remains legacy seed. */
@@ -256,7 +259,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     let puzzle: Puzzle;
     try {
       puzzle = minimizeClues(maxPuzzle, answer, rng, {
-        maxTier: gateTier, nodeCap: NODE_CAP, deadline, observer: opts.observer,
+        maxTier: gateTier, nodeCap: NODE_CAP, deadline, observer: opts.observer, flowProfile: opts.flowProfile,
       });
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('minimizeClues: deadline exceeded')) continue;
@@ -279,8 +282,14 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
 
     const url = encodeUrl(puzzle);
     const reDecoded = decodeUrl(url);
-    const reSolve = solve(reDecoded, { maxSolutions: 2, nodeCap: NODE_CAP });
+    const codecModelStart = performance.now();
+    const codecModel = buildModel(reDecoded);
+    opts.observer?.onModelBuilt?.(performance.now() - codecModelStart, 'codec');
+    const codecSolveStart = performance.now();
+    const reSolve = solveModel(codecModel, { maxSolutions: 2, nodeCap: NODE_CAP });
+    opts.observer?.onSolve?.(performance.now() - codecSolveStart, 'codec');
     if (reSolve.capped || reSolve.solutions.length !== 1 || !sameSolution(reSolve.solutions[0]!, answer)) continue;
+    if (performance.now() > deadline) continue;
 
     return {
       puzzle,
@@ -308,5 +317,5 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
 export function generateRatedCandidate(opts: GenerateOptions, candidateIndex: number): RatedCandidate {
   const seed = candidateSeed(opts.seed, candidateIndex);
   const result = generatePuzzle({ ...opts, seed });
-  return { ...result, candidateIndex, signature: signatureOf(result) };
+  return { ...result, candidateIndex, signature: signatureOf(result, opts.observer) };
 }

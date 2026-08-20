@@ -17,12 +17,13 @@
  */
 
 import type { Puzzle, Solution } from '../core/types';
-import { NO_CLUE } from '../core/types';
+import { dirBit, Dir, NO_CLUE } from '../core/types';
 import { solveModel } from '../solver/search';
 import { deduceModel } from '../solver/deduce';
 import { buildModel } from '../solver/model';
 import { shuffle } from './rng';
 import type { GenerationObserver } from './generate';
+import type { FlowProfile } from './flow';
 
 export interface MinimizeGates {
   /** Cap on `deduce().maxTier` — a removal is kept only if the result stays at or below it. */
@@ -38,6 +39,42 @@ export interface MinimizeGates {
    */
   readonly deadline?: number;
   readonly observer?: GenerationObserver;
+  /** Optional deterministic first-pass bias; correctness gates stay identical. */
+  readonly flowProfile?: FlowProfile;
+}
+
+const arrowCount = (mask: number): number =>
+  (mask & 1) + ((mask >>> 1) & 1) + ((mask >>> 2) & 1) + ((mask >>> 3) & 1);
+
+function tieDistance(puzzle: Puzzle, answer: Solution, clue: number): number {
+  const x = clue % puzzle.cols, y = Math.floor(clue / puzzle.cols), mask = puzzle.clues[clue]!;
+  const directions: readonly [number, number, Dir][] = [[0, -1, Dir.Up], [0, 1, Dir.Down], [-1, 0, Dir.Left], [1, 0, Dir.Right]];
+  for (const [dx, dy, dir] of directions) if ((mask & dirBit(dir)) !== 0) {
+    for (let distance = 1;; distance++) {
+      const xx = x + dx * distance, yy = y + dy * distance;
+      if (xx < 0 || yy < 0 || xx >= puzzle.cols || yy >= puzzle.rows) break;
+      if (answer.shaded[yy * puzzle.cols + xx]) return distance;
+    }
+  }
+  return 0;
+}
+
+/** Order removals to make alternate local minima express the requested flow. */
+export function prioritizeClueRemovals(
+  positions: number[],
+  puzzle: Puzzle,
+  answer: Solution,
+  profile?: FlowProfile,
+): void {
+  if (!profile) return;
+  const centreX = (puzzle.cols - 1) / 2, centreY = (puzzle.rows - 1) / 2;
+  const priority = (cell: number): number => {
+    if (profile === 'crossfire') return arrowCount(puzzle.clues[cell]!);
+    if (profile === 'long-range') return tieDistance(puzzle, answer, cell);
+    if (profile === 'shape-chain') return -arrowCount(puzzle.clues[cell]!);
+    return Math.hypot(cell % puzzle.cols - centreX, Math.floor(cell / puzzle.cols) - centreY);
+  };
+  positions.sort((a, b) => priority(a) - priority(b));
 }
 
 function sameSolution(a: Solution, b: Solution): boolean {
@@ -60,6 +97,7 @@ export function minimizeClues(
   const positions: number[] = [];
   for (let i = 0; i < clues.length; i++) if (clues[i] !== NO_CLUE) positions.push(i);
   shuffle(positions, rng);
+  prioritizeClueRemovals(positions, puzzle, answer, gates.flowProfile);
 
   let removed: boolean;
   do {

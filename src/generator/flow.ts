@@ -1,7 +1,8 @@
 import { dirBit, Dir, NO_CLUE, type Puzzle, type Solution } from '../core/types';
-import { deduce } from '../solver/deduce';
+import { deduceModel } from '../solver/deduce';
+import { buildModel } from '../solver/model';
 import type { RuleId } from '../solver/propagate';
-import type { Difficulty, GenerateResult } from './generate';
+import type { Difficulty, GenerateResult, GenerationObserver } from './generate';
 
 export type FlowProfile = 'crossfire' | 'long-range' | 'shape-chain' | 'split-front';
 export interface FlowSignature {
@@ -24,7 +25,11 @@ const dispersion = (cells: readonly number[], cols: number, rows: number) => {
   if (cells.length < 2) return 0;
   let total = 0, pairs = 0;
   for (let i = 0; i < cells.length; i++) for (let j = i + 1; j < cells.length; j++) {
-    total += Math.abs(cells[i]! % cols - cells[j]! % cols) + Math.abs(Math.floor(cells[i]! / cols) - Math.floor(cells[j]! / cols)); pairs++;
+    total += Math.hypot(
+      cells[i]! % cols - cells[j]! % cols,
+      Math.floor(cells[i]! / cols) - Math.floor(cells[j]! / cols),
+    );
+    pairs++;
   }
   return Math.min(1, total / pairs / diagonal({ cols, rows } as Puzzle));
 };
@@ -53,8 +58,15 @@ function tieDistance(puzzle: Puzzle, answer: Solution, clue: number): number {
   for (const [dx, dy, dir] of directions) if ((mask & dirBit(dir)) !== 0) for (let d = 1;; d++) { const xx = x + dx * d, yy = y + dy * d; if (xx < 0 || yy < 0 || xx >= puzzle.cols || yy >= puzzle.rows) break; if (answer.shaded[yy * puzzle.cols + xx]) return d; }
   return 0;
 }
-export function signatureOf(result: GenerateResult): FlowSignature {
-  const { puzzle, answer } = canonical(result.puzzle, result.answer); const deduction = deduce(puzzle);
+export function signatureOf(result: GenerateResult, observer?: GenerationObserver): FlowSignature {
+  const scoringStart = performance.now();
+  const { puzzle, answer } = canonical(result.puzzle, result.answer);
+  const modelStart = performance.now();
+  const model = buildModel(puzzle);
+  observer?.onModelBuilt?.(performance.now() - modelStart, 'scoring');
+  const deduceStart = performance.now();
+  const deduction = deduceModel(model);
+  observer?.onDeduce?.(performance.now() - deduceStart, 'scoring');
   const clues: number[] = []; const counts = [0, 0, 0, 0]; let ties = 0;
   for (let i = 0; i < puzzle.clues.length; i++) if (puzzle.clues[i]! > 0) { clues.push(i); const c = Math.min(4, Math.max(1, puzzle.clues[i]!.toString(2).split('1').length - 1)); counts[c - 1] = counts[c - 1]! + 1; ties += tieDistance(puzzle, answer, i); }
   const forcedAt = deduction.steps.findIndex((step) => step.rule === 'forced-placement');
@@ -64,7 +76,9 @@ export function signatureOf(result: GenerateResult): FlowSignature {
   for (const step of deduction.steps) { if (step.sourceClue !== undefined || step.rule === 'cover-analysis' || step.rule.startsWith('probe-')) reset = true; if (step.rule === 'forced-placement') { placements++; if (reset) chain = 1; else { chain++; links++; } largest = Math.max(largest, chain); reset = false; } }
   const technical = deduction.steps.filter((step) => step.rule !== 'clue-cell-exclusion'); const total = technical.length || 1;
   const histogram = Object.fromEntries(RULES.map((rule) => [rule, technical.filter((step) => step.rule === rule).length / total])) as Record<RuleId, number>;
-  return { arrowCardinality: counts.map((count) => count / (clues.length || 1)) as unknown as readonly [number, number, number, number], meanTieDistance: ties / (clues.length || 1) / Math.max(puzzle.cols, puzzle.rows), clueDispersion: dispersion(clues, puzzle.cols, puzzle.rows), earlySourceShare: sources.length / (clues.length || 1), earlySourceDispersion: dispersion(sources, puzzle.cols, puzzle.rows), cascadeLinkShare: placements < 2 ? 0 : links / (placements - 1), largestCascadeShare: placements ? largest / placements : 0, ruleHistogram: histogram, probeChainShare: deduction.maxProbeChain / (puzzle.cols * puzzle.rows) };
+  const signature = { arrowCardinality: counts.map((count) => count / (clues.length || 1)) as unknown as readonly [number, number, number, number], meanTieDistance: ties / (clues.length || 1) / Math.max(puzzle.cols, puzzle.rows), clueDispersion: dispersion(clues, puzzle.cols, puzzle.rows), earlySourceShare: sources.length / (clues.length || 1), earlySourceDispersion: dispersion(sources, puzzle.cols, puzzle.rows), cascadeLinkShare: placements < 2 ? 0 : links / (placements - 1), largestCascadeShare: placements ? largest / placements : 0, ruleHistogram: histogram, probeChainShare: deduction.maxProbeChain / (puzzle.cols * puzzle.rows) };
+  observer?.onScoring?.(performance.now() - scoringStart);
+  return signature;
 }
 export function scoreFlow(profile: FlowProfile, s: FlowSignature, context: FlowContext): number {
   const multi = s.arrowCardinality[1] + s.arrowCardinality[2] + s.arrowCardinality[3]; const h = s.ruleHistogram;
