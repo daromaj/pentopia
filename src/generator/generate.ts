@@ -58,6 +58,7 @@ import { createRng } from './rng';
 import { placeShapes } from './place';
 import { deriveMaximalClues } from './clues';
 import { minimizeClues } from './minimize';
+import { signatureOf, type RatedCandidate } from './flow';
 
 export type Difficulty = 'easy' | 'medium' | 'hard' | 'expert';
 
@@ -97,6 +98,10 @@ export interface GenerationObserver {
   onRemoval?(accepted: boolean): void;
   onModelBuilt?(elapsedMs: number): void;
 }
+
+/** Frozen spacing for candidate RNG substreams; candidate zero remains legacy seed. */
+export const SEED_BUMPS = 0x100;
+export const BUMP_STRIDE = 0x9e3779b1;
 
 export interface GenerateStats {
   readonly attempts: number;
@@ -291,4 +296,12 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
       (timedOut ? ` — timeBudgetMs (${timeBudgetMs}ms) exceeded before finding an accepted puzzle.` : '.') +
       ` Try a larger board, a different seed, or more attempts${timedOut ? ', or a larger timeBudgetMs' : ''}.`,
   );
+}
+
+/** Generate one independently seeded tournament candidate. Candidate zero is byte-stable legacy generation. */
+export function generateRatedCandidate(opts: GenerateOptions, candidateIndex: number): RatedCandidate {
+  if (!Number.isInteger(candidateIndex) || candidateIndex < 0) throw new Error('generateRatedCandidate: candidateIndex must be a non-negative integer');
+  const seed = candidateIndex === 0 ? opts.seed : (opts.seed + candidateIndex * SEED_BUMPS * BUMP_STRIDE) >>> 0;
+  const result = generatePuzzle({ ...opts, seed });
+  return { ...result, candidateIndex, signature: signatureOf(result) };
 }

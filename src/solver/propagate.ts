@@ -113,6 +113,8 @@ export interface Step {
   readonly rule: RuleId;
   readonly cells: number[];
   readonly detail?: string;
+  /** Clue cell that directly caused a clue-specific deduction. */
+  readonly sourceClue?: number;
   /**
    * Whether this step *shaded* or *excluded* its cells. Most rules are
    * unambiguous by `rule` alone (see deduce's `SHADE_RULES`); `cover-analysis`
@@ -332,6 +334,7 @@ function ruleArrowDistance(ctx: Ctx): void {
     if (excludedCells.length > 0) {
       ctx.steps.push({
         rule: 'arrow-distance-bounds',
+        sourceClue: clue.index,
         kind: 'exclude',
         cells: excludedCells,
         detail: `clue ${clue.index}: tie ∈ [${lo}, ${hi}]`,
@@ -355,6 +358,7 @@ function ruleArrowDistance(ctx: Ctx): void {
       if (forced.length > 0) {
         ctx.steps.push({
           rule: 'arrow-forced-shade',
+          sourceClue: clue.index,
           kind: 'shade',
           cells: forced,
           detail: `clue ${clue.index}: tie pinned at ${t}`,
@@ -687,6 +691,7 @@ function ruleClueCandidate(ctx: Ctx): void {
       if (shadeCells.length > 0) {
         ctx.steps.push({
           rule: 'clue-candidate',
+          sourceClue: clue.index,
           kind: 'shade',
           cells: shadeCells,
           detail: `clue ${clue.index}: ${count} candidate placement(s) for the ${dirName(dir)} ray${tInfo}`,
@@ -699,6 +704,7 @@ function ruleClueCandidate(ctx: Ctx): void {
       if (exclCells.length > 0) {
         ctx.steps.push({
           rule: 'clue-candidate',
+          sourceClue: clue.index,
           kind: 'exclude',
           cells: exclCells,
           detail: `clue ${clue.index}: common border of ${count} candidate placement(s) for the ${dirName(dir)} ray${tInfo}`,
