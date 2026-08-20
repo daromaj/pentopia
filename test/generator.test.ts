@@ -186,6 +186,17 @@ describe('generator: shared difficulty predicate', () => {
   });
 });
 
+describe('generator: paired model gates', () => {
+  it('builds one model for every generator-owned solve/deduce pair', () => {
+    let builds = 0, solves = 0, deductions = 0;
+    generatePuzzle({ cols: 6, rows: 6, seed: 3, difficulty: 'medium', observer: {
+      onModelBuilt: () => { builds++; }, onSolve: () => { solves++; }, onDeduce: () => { deductions++; },
+    } });
+    expect(builds).toBe(solves);
+    expect(deductions).toBeLessThanOrEqual(builds);
+  });
+});
+
 describe('generator: logged samples (eyeball / open on puzz.link)', () => {
   it('logs a 6x6 and an 8x8 sample', () => {
     for (const [cols, rows, seed] of [

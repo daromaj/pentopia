@@ -37,12 +37,8 @@
  * but with expert's ceiling raised to tier 7, minimize's per-removal deduce()
  * calls hit exactly that stall constantly — it's the hot path, not a rare
  * escape hatch. `opts.timeBudgetMs` (default ~60s for expert, effectively
- * unbounded for the other tiers) bounds this: minimizeClues checks the
- * deadline before each candidate removal and, once passed, stops removing
- * clues and returns the puzzle as-is — a partially-minimized clue set can
- * still satisfy the floor, it's just not locally minimal. If the deadline
- * passes across attempts with no accepted puzzle, generation falls through to
- * the existing "exhausted N attempts" error.
+ * unbounded for the other tiers) bounds this: a deadline abandons the current
+ * candidate rather than returning a puzzle before local-minimality fixed point.
  */
 
 import type { Bank, Puzzle, Solution } from '../core/types';
@@ -51,7 +47,7 @@ import { PRESETS } from '../core/bank';
 import { validate } from '../core/validator';
 import { encodeUrl, decodeUrl } from '../core/codec/url';
 import { solve, solveModel } from '../solver/search';
-import { deduce, deduceModel, type DeduceResult } from '../solver/deduce';
+import { deduceModel, type DeduceResult } from '../solver/deduce';
 import { buildModel } from '../solver/model';
 import type { RuleId } from '../solver/propagate';
 import { createRng } from './rng';
@@ -76,10 +72,9 @@ export interface GenerateOptions {
   readonly pieceCount?: number;
   /**
    * Wall-clock budget (ms) for the whole `generatePuzzle` call, measured from
-   * entry. Once passed, minimize stops removing clues mid-attempt (see
-   * MinimizeGates.deadline) and, if no puzzle has been accepted by the time
-   * it's checked again at the top of the attempt loop, generation throws the
-   * usual "exhausted attempts" error rather than grinding on. Default:
+   * entry. Once passed, minimization abandons its current candidate and the
+   * usual "exhausted attempts" error is thrown rather than accepting partial
+   * minimization. Default:
    * effectively unbounded (`Infinity`) for easy/medium/hard — their ceilings
    * never reach the expensive depth-2 probe path — and ~60_000ms for expert,
    * where depth-2 deduce() calls are the hot path during minimize.
@@ -248,28 +243,31 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     opts.observer?.onDeduce?.(performance.now() - deduceStart);
     if (!maxDed.solved || maxDed.maxTier > gateTier) continue;
 
-    // 4. Minimize against both gates. `deadline` lets minimize bail early on
-    //    the expensive expert (tier-7) hot path and hand back a
-    //    partially-minimized-but-still-floor-eligible puzzle rather than
-    //    grinding past the overall time budget.
+    // 4. Minimize to a fixed point. A deadline abandons this candidate.
     opts.observer?.onPhase?.('minimizing');
-    const puzzle = minimizeClues(maxPuzzle, answer, rng, {
-      maxTier: gateTier,
-      nodeCap: NODE_CAP,
-      deadline,
-      observer: opts.observer,
-    });
+    let puzzle: Puzzle;
+    try {
+      puzzle = minimizeClues(maxPuzzle, answer, rng, {
+        maxTier: gateTier, nodeCap: NODE_CAP, deadline, observer: opts.observer,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('minimizeClues: deadline exceeded')) continue;
+      throw error;
+    }
 
-    // 5. Difficulty floor: reject puzzles too trivial for the requested tier.
+    // 5/6. Solve first, then deduce, from one immutable compiled model.
+    if (!validate(puzzle, answer).ok) continue;
+    const finalModelStart = performance.now();
+    const finalModel = buildModel(puzzle);
+    opts.observer?.onModelBuilt?.(performance.now() - finalModelStart);
+    const finalSolveStart = performance.now();
+    const finalSolve = solveModel(finalModel, { maxSolutions: 2, nodeCap: NODE_CAP });
+    opts.observer?.onSolve?.(performance.now() - finalSolveStart);
+    if (finalSolve.capped || finalSolve.solutions.length !== 1 || !sameSolution(finalSolve.solutions[0]!, answer)) continue;
     const finalDeduceStart = performance.now();
-    const ded = deduce(puzzle);
+    const ded = deduceModel(finalModel);
     opts.observer?.onDeduce?.(performance.now() - finalDeduceStart);
     if (!satisfiesDifficulty(difficulty, ded, cols, rows)) continue;
-
-    // 6. Full AC verification.
-    if (!validate(puzzle, answer).ok) continue;
-    const finalSolve = solve(puzzle, { maxSolutions: 2, nodeCap: NODE_CAP });
-    if (finalSolve.capped || finalSolve.solutions.length !== 1 || !sameSolution(finalSolve.solutions[0]!, answer)) continue;
 
     const url = encodeUrl(puzzle);
     const reDecoded = decodeUrl(url);

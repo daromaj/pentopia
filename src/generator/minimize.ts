@@ -31,12 +31,10 @@ export interface MinimizeGates {
   readonly nodeCap?: number;
   /**
    * A `performance.now()` timestamp. Checked before each candidate removal;
-   * once passed, minimize stops removing clues and returns the puzzle as it
-   * stands (partially minimized clue sets still pass the caller's floor
-   * check — they just carry a few more clues than a fully-minimized run
-   * would). Exists because depth-2 `probe-forcing-2` deduce() calls are
-   * O(cells² × propagation) and are exactly the hot path when `maxTier`
-   * allows tier 7 (expert). Default: unbounded (no deadline).
+   * once passed, minimization throws so its caller abandons this candidate;
+   * it never returns a partially minimized clue set. Exists because depth-2
+   * `probe-forcing-2` deduce() calls are O(cells² × propagation). Default:
+   * unbounded (no deadline).
    */
   readonly deadline?: number;
   readonly observer?: GenerationObserver;
