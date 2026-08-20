@@ -95,8 +95,16 @@ export interface GenerationObserver {
 }
 
 /** Frozen spacing for candidate RNG substreams; candidate zero remains legacy seed. */
-export const SEED_BUMPS = 0x100;
-export const BUMP_STRIDE = 0x9e3779b1;
+export const SEED_BUMPS = 8;
+export const BUMP_STRIDE = 7919;
+
+export function candidateSeed(base: number, candidateIndex: number, bumpIndex = 0): number {
+  if (!Number.isInteger(candidateIndex) || candidateIndex < 0) throw new Error('candidateIndex must be non-negative');
+  if (!Number.isInteger(bumpIndex) || bumpIndex < 0 || bumpIndex >= SEED_BUMPS) {
+    throw new Error(`bumpIndex must be between 0 and ${SEED_BUMPS - 1}`);
+  }
+  return (base + (candidateIndex * SEED_BUMPS + bumpIndex) * BUMP_STRIDE) >>> 0;
+}
 
 export interface GenerateStats {
   readonly attempts: number;
@@ -298,8 +306,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
 
 /** Generate one independently seeded tournament candidate. Candidate zero is byte-stable legacy generation. */
 export function generateRatedCandidate(opts: GenerateOptions, candidateIndex: number): RatedCandidate {
-  if (!Number.isInteger(candidateIndex) || candidateIndex < 0) throw new Error('generateRatedCandidate: candidateIndex must be a non-negative integer');
-  const seed = candidateIndex === 0 ? opts.seed : (opts.seed + candidateIndex * SEED_BUMPS * BUMP_STRIDE) >>> 0;
+  const seed = candidateSeed(opts.seed, candidateIndex);
   const result = generatePuzzle({ ...opts, seed });
   return { ...result, candidateIndex, signature: signatureOf(result) };
 }

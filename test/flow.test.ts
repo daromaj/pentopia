@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { generatePuzzle, generateRatedCandidate, type Difficulty } from '@generator/generate';
+import { candidateSeed, generatePuzzle, generateRatedCandidate, SEED_BUMPS, type Difficulty } from '@generator/generate';
 import { distanceFlow, scoreFlow, selectCandidate, type FlowSignature, type RatedCandidate } from '@generator/flow';
 import type { RuleId } from '@solver/propagate';
 
@@ -29,5 +29,18 @@ describe('rated candidate generation', () => {
     const opts = { cols: 6, rows: 6, seed: 123, difficulty: 'medium' as const };
     expect(generateRatedCandidate(opts, 0).url).toBe(generatePuzzle(opts).url);
     expect(generateRatedCandidate(opts, 1).candidateIndex).toBe(1);
+  });
+
+  it('keeps every supported candidate and retry bump on a distinct deterministic seed', () => {
+    const base = 0xfedcba98;
+    const seeds = new Set<number>();
+    for (let candidateIndex = 0; candidateIndex < 4; candidateIndex++) {
+      for (let bumpIndex = 0; bumpIndex < SEED_BUMPS; bumpIndex++) {
+        const seed = candidateSeed(base, candidateIndex, bumpIndex);
+        expect(seeds.has(seed)).toBe(false);
+        seeds.add(seed);
+      }
+    }
+    expect(seeds.size).toBe(32);
   });
 });
