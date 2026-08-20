@@ -1,6 +1,6 @@
 import { dirBit, Dir, NO_CLUE, type Puzzle, type Solution } from '../core/types';
-import { deduce, type DeduceResult } from '../solver/deduce';
-import type { RuleId, Step } from '../solver/propagate';
+import { deduce } from '../solver/deduce';
+import type { RuleId } from '../solver/propagate';
 import type { Difficulty, GenerateResult } from './generate';
 
 export type FlowProfile = 'crossfire' | 'long-range' | 'shape-chain' | 'split-front';
