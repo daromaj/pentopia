@@ -21,6 +21,7 @@ import { NO_CLUE } from '../core/types';
 import { solve } from '../solver/search';
 import { deduce } from '../solver/deduce';
 import { shuffle } from './rng';
+import type { GenerationObserver } from './generate';
 
 export interface MinimizeGates {
   /** Cap on `deduce().maxTier` — a removal is kept only if the result stays at or below it. */
@@ -37,6 +38,7 @@ export interface MinimizeGates {
    * allows tier 7 (expert). Default: unbounded (no deadline).
    */
   readonly deadline?: number;
+  readonly observer?: GenerationObserver;
 }
 
 function sameSolution(a: Solution, b: Solution): boolean {
@@ -60,8 +62,14 @@ export function minimizeClues(
   for (let i = 0; i < clues.length; i++) if (clues[i] !== NO_CLUE) positions.push(i);
   shuffle(positions, rng);
 
-  for (const pos of positions) {
-    if (gates.deadline !== undefined && performance.now() > gates.deadline) break;
+  let removed: boolean;
+  do {
+    removed = false;
+    for (const pos of positions) {
+      if (clues[pos] === NO_CLUE) continue;
+      if (gates.deadline !== undefined && performance.now() > gates.deadline) {
+        throw new Error('minimizeClues: deadline exceeded before local minimality fixed point');
+      }
 
     const saved = clues[pos]!;
     clues[pos] = NO_CLUE;
@@ -81,8 +89,11 @@ export function minimizeClues(
       keep = d.solved && (gates.maxTier === undefined || d.maxTier <= gates.maxTier);
     }
 
-    if (!keep) clues[pos] = saved; // restore — this clue is load-bearing
-  }
+      gates.observer?.onRemoval?.(keep);
+      if (keep) removed = true;
+      else clues[pos] = saved; // restore — this clue is load-bearing
+    }
+  } while (removed);
 
   return { ...puzzle, clues };
 }

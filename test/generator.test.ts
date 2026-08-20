@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { generatePuzzle, expertProbeFloor } from '@generator/generate';
+import { generatePuzzle, expertProbeFloor, satisfiesDifficulty } from '@generator/generate';
 import { deriveMaximalClues } from '@generator/clues';
 import { solve } from '@solver/search';
 import { deduce } from '@solver/deduce';
@@ -141,13 +141,14 @@ describe('generator: expert difficulty', () => {
   });
 });
 
-describe('generator: minimize is locally minimal', () => {
-  it('output clue set ⊆ maximal set, and remaining clues are load-bearing', () => {
-    const cols = 6;
-    const rows = 6;
-    const gateTier = 5;
-    // Use a real generated puzzle: it is minimized against the medium gate.
-    const { puzzle: minimized, answer } = generatePuzzle({ cols, rows, seed: 3, difficulty: 'medium' });
+describe('generator: local minimality corpus', () => {
+  for (const { cols, rows, seed, difficulty } of [
+    { cols: 6, rows: 6, seed: 3, difficulty: 'easy' as const },
+    { cols: 6, rows: 6, seed: 4, difficulty: 'medium' as const },
+    { cols: 6, rows: 6, seed: 1, difficulty: 'hard' as const },
+  ]) it(`${cols}x${rows} ${difficulty} seed ${seed} has only load-bearing clues`, () => {
+    const gateTier = difficulty === 'easy' ? 4 : difficulty === 'medium' ? 5 : 6;
+    const { puzzle: minimized, answer } = generatePuzzle({ cols, rows, seed, difficulty });
 
     // The maximal legal clue set for this answer (superset by construction).
     const maxClues = deriveMaximalClues(cols, rows, answer.shaded);
@@ -157,21 +158,31 @@ describe('generator: minimize is locally minimal', () => {
       if (minimized.clues[i] !== NO_CLUE) expect(minimized.clues[i]).toBe(maxClues[i]);
     }
 
-    // Local minimality: sample up to 3 remaining clues; removing any one must break a gate.
+    // Local minimality: every remaining clue must break uniqueness, deduction,
+    // or the ceiling. The difficulty floor is intentionally not a removal gate.
     const kept: number[] = [];
     for (let i = 0; i < minimized.clues.length; i++) if (minimized.clues[i] !== NO_CLUE) kept.push(i);
-    const sample = kept.slice(0, 3);
-    expect(sample.length).toBeGreaterThan(0);
-    for (const pos of sample) {
+    expect(kept.length).toBeGreaterThan(0);
+    for (const pos of kept) {
       const probeClues = minimized.clues.slice();
       probeClues[pos] = NO_CLUE;
       const probe: Puzzle = { ...minimized, clues: probeClues };
       const res = solve(probe, { maxSolutions: 2, nodeCap: 200_000 });
-      const uniqueToAnswer = res.solutions.length === 1 && sameSolution(res.solutions[0]!, answer!);
+      const uniqueToAnswer = !res.capped && res.solutions.length === 1 && sameSolution(res.solutions[0]!, answer!);
       const ded = deduce(probe);
       const gatesHold = uniqueToAnswer && ded.solved && ded.maxTier <= gateTier;
       expect(gatesHold).toBe(false); // removing a kept clue must break some gate
     }
+  });
+});
+
+describe('generator: shared difficulty predicate', () => {
+  it('applies ceiling and floor together', () => {
+    const easy = generatePuzzle({ cols: 6, rows: 6, seed: 1, difficulty: 'easy' });
+    const hard = generatePuzzle({ cols: 6, rows: 6, seed: 1, difficulty: 'hard' });
+    expect(satisfiesDifficulty('easy', deduce(easy.puzzle), 6, 6)).toBe(true);
+    expect(satisfiesDifficulty('easy', deduce(hard.puzzle), 6, 6)).toBe(false);
+    expect(satisfiesDifficulty('hard', deduce(hard.puzzle), 6, 6)).toBe(true);
   });
 });
 

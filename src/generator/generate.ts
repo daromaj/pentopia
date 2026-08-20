@@ -83,6 +83,18 @@ export interface GenerateOptions {
    * where depth-2 deduce() calls are the hot path during minimize.
    */
   readonly timeBudgetMs?: number;
+  /** Optional diagnostics hook; it never changes candidate selection. */
+  readonly observer?: GenerationObserver;
+}
+
+export type GeneratorPhase = 'placing-shapes' | 'checking-uniqueness' | 'minimizing';
+
+export interface GenerationObserver {
+  onPhase?(phase: GeneratorPhase): void;
+  onSolve?(elapsedMs: number): void;
+  onDeduce?(elapsedMs: number): void;
+  onRemoval?(accepted: boolean): void;
+  onModelBuilt?(elapsedMs: number): void;
 }
 
 export interface GenerateStats {
@@ -163,7 +175,13 @@ function sameSolution(a: Solution, b: Solution): boolean {
 }
 
 /** Is this finished puzzle hard *enough* for the requested difficulty? */
-function floorSatisfied(difficulty: Difficulty, ded: DeduceResult, cols: number, rows: number): boolean {
+export function satisfiesDifficulty(
+  difficulty: Difficulty,
+  ded: Pick<DeduceResult, 'solved' | 'maxTier' | 'tierHistogram'>,
+  cols: number,
+  rows: number,
+): boolean {
+  if (!ded.solved || ded.maxTier > GATE_TIER[difficulty]) return false;
   const h = ded.tierHistogram;
   switch (difficulty) {
     case 'easy':
@@ -197,9 +215,10 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
   const deadline = t0 + timeBudgetMs; // may be Infinity — fine, always > now()
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (performance.now() > deadline) break; // budget exhausted across attempts — fall through to the error below
+    if (performance.now() > deadline) break; // a timed-out attempt is never accepted
 
     // 1. Random separated layout → answer.
+    opts.observer?.onPhase?.('placing-shapes');
     const answer = placeShapes(cols, rows, bank, rng, { pieceCount: opts.pieceCount });
     if (answer === null) continue; // wedged; retry with fresh randomness
 
@@ -210,21 +229,33 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     // 3. Ceiling check at maximal clues: must solve uniquely to the answer and
     //    deduce-solve within the difficulty cap. If even the fullest clue set
     //    overshoots the ceiling, this layout is hopeless — new layout.
+    opts.observer?.onPhase?.('checking-uniqueness');
+    const solveStart = performance.now();
     const maxSolve = solve(maxPuzzle, { maxSolutions: 2, nodeCap: NODE_CAP });
+    opts.observer?.onSolve?.(performance.now() - solveStart);
     if (maxSolve.capped || maxSolve.solutions.length !== 1 || !sameSolution(maxSolve.solutions[0]!, answer)) continue;
+    const deduceStart = performance.now();
     const maxDed = deduce(maxPuzzle);
+    opts.observer?.onDeduce?.(performance.now() - deduceStart);
     if (!maxDed.solved || maxDed.maxTier > gateTier) continue;
 
     // 4. Minimize against both gates. `deadline` lets minimize bail early on
     //    the expensive expert (tier-7) hot path and hand back a
     //    partially-minimized-but-still-floor-eligible puzzle rather than
     //    grinding past the overall time budget.
-    const puzzle = minimizeClues(maxPuzzle, answer, rng, { maxTier: gateTier, nodeCap: NODE_CAP, deadline });
+    opts.observer?.onPhase?.('minimizing');
+    const puzzle = minimizeClues(maxPuzzle, answer, rng, {
+      maxTier: gateTier,
+      nodeCap: NODE_CAP,
+      deadline,
+      observer: opts.observer,
+    });
 
     // 5. Difficulty floor: reject puzzles too trivial for the requested tier.
+    const finalDeduceStart = performance.now();
     const ded = deduce(puzzle);
-    if (!ded.solved) continue;
-    if (!floorSatisfied(difficulty, ded, cols, rows)) continue;
+    opts.observer?.onDeduce?.(performance.now() - finalDeduceStart);
+    if (!satisfiesDifficulty(difficulty, ded, cols, rows)) continue;
 
     // 6. Full AC verification.
     if (!validate(puzzle, answer).ok) continue;
