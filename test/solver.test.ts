@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { solve } from '@solver/search';
+import { solve, solveModel } from '@solver/search';
 import { buildModel } from '@solver/model';
 import { initState } from '@solver/state';
 import { propagateToFixpoint } from '@solver/propagate';
@@ -143,6 +143,15 @@ describe('solver: ambiguous puzzles', () => {
     const res = solve(puzzle, { maxSolutions: 2 });
     expect(res.solutions.length).toBe(2);
     expect(res.complete).toBe(false); // stopped early at the 2-solution cap
+  });
+});
+
+describe('solver: compiled model wrapper', () => {
+  it('returns the same complete-search result as the puzzle wrapper', () => {
+    const puzzle = decodeUrl('pentopia/10/10/2s9ziar5gbi6z6hai9s4//p');
+    expect(solveModel(buildModel(puzzle), { maxSolutions: 2, nodeCap: 200_000 })).toEqual(
+      solve(puzzle, { maxSolutions: 2, nodeCap: 200_000 }),
+    );
   });
 });
 

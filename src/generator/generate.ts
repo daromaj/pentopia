@@ -50,8 +50,9 @@ import { NO_CLUE } from '../core/types';
 import { PRESETS } from '../core/bank';
 import { validate } from '../core/validator';
 import { encodeUrl, decodeUrl } from '../core/codec/url';
-import { solve } from '../solver/search';
-import { deduce, type DeduceResult } from '../solver/deduce';
+import { solve, solveModel } from '../solver/search';
+import { deduce, deduceModel, type DeduceResult } from '../solver/deduce';
+import { buildModel } from '../solver/model';
 import type { RuleId } from '../solver/propagate';
 import { createRng } from './rng';
 import { placeShapes } from './place';
@@ -230,12 +231,15 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     //    deduce-solve within the difficulty cap. If even the fullest clue set
     //    overshoots the ceiling, this layout is hopeless — new layout.
     opts.observer?.onPhase?.('checking-uniqueness');
+    const modelStart = performance.now();
+    const maxModel = buildModel(maxPuzzle);
+    opts.observer?.onModelBuilt?.(performance.now() - modelStart);
     const solveStart = performance.now();
-    const maxSolve = solve(maxPuzzle, { maxSolutions: 2, nodeCap: NODE_CAP });
+    const maxSolve = solveModel(maxModel, { maxSolutions: 2, nodeCap: NODE_CAP });
     opts.observer?.onSolve?.(performance.now() - solveStart);
     if (maxSolve.capped || maxSolve.solutions.length !== 1 || !sameSolution(maxSolve.solutions[0]!, answer)) continue;
     const deduceStart = performance.now();
-    const maxDed = deduce(maxPuzzle);
+    const maxDed = deduceModel(maxModel);
     opts.observer?.onDeduce?.(performance.now() - deduceStart);
     if (!maxDed.solved || maxDed.maxTier > gateTier) continue;
 

@@ -18,8 +18,9 @@
 
 import type { Puzzle, Solution } from '../core/types';
 import { NO_CLUE } from '../core/types';
-import { solve } from '../solver/search';
-import { deduce } from '../solver/deduce';
+import { solveModel } from '../solver/search';
+import { deduceModel } from '../solver/deduce';
+import { buildModel } from '../solver/model';
 import { shuffle } from './rng';
 import type { GenerationObserver } from './generate';
 
@@ -79,13 +80,20 @@ export function minimizeClues(
     // A capped search proves nothing — "found 1 so far" when the node cap
     // cut the search short must never count as unique, or an ambiguous
     // puzzle slips through the gate.
-    const res = solve(candidate, { maxSolutions: 2, nodeCap });
+    const modelStart = performance.now();
+    const model = buildModel(candidate);
+    gates.observer?.onModelBuilt?.(performance.now() - modelStart);
+    const solveStart = performance.now();
+    const res = solveModel(model, { maxSolutions: 2, nodeCap });
+    gates.observer?.onSolve?.(performance.now() - solveStart);
     let keep =
       !res.capped && res.solutions.length === 1 && sameSolution(res.solutions[0]!, answer);
 
     // Gate (b): guess-free human-solvable, within the tier cap when specified.
     if (keep) {
-      const d = deduce(candidate);
+      const deduceStart = performance.now();
+      const d = deduceModel(model);
+      gates.observer?.onDeduce?.(performance.now() - deduceStart);
       keep = d.solved && (gates.maxTier === undefined || d.maxTier <= gates.maxTier);
     }
 

@@ -110,7 +110,11 @@ const DEDUCE_BUDGET_MS = 30_000;
  * identical `steps`.
  */
 export function deduce(puzzle: Puzzle): DeduceResult {
-  const model = buildModel(puzzle);
+  return deduceModel(buildModel(puzzle));
+}
+
+/** Deduce from a precompiled immutable puzzle model. */
+export function deduceModel(model: ReturnType<typeof buildModel>): DeduceResult {
   const state = initState(model);
   // The deducer runs the full engine including the expensive `cover-analysis`,
   // `clue-candidate`, and depth-2 `probe-forcing` rules (search leaves probing
@@ -156,7 +160,7 @@ export function deduce(puzzle: Puzzle): DeduceResult {
   // committed placement, and the full validator agrees.
   const free = state.shaded.clone();
   free.andNotAssign(state.committedCells);
-  const solved = unresolved === 0 && free.isEmpty() && validate(puzzle, solution).ok;
+  const solved = unresolved === 0 && free.isEmpty() && validate(model.puzzle, solution).ok;
 
   return {
     solved,

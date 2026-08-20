@@ -175,7 +175,11 @@ function dfs(ctx: SearchCtx, state: SolveState): void {
 }
 
 export function solve(puzzle: Puzzle, opts?: SolveOptions): SolveResult {
-  const model = buildModel(puzzle);
+  return solveModel(buildModel(puzzle), opts);
+}
+
+/** Solve a precompiled immutable puzzle model. */
+export function solveModel(model: Model, opts?: SolveOptions): SolveResult {
   const ctx: SearchCtx = {
     model,
     solutions: [],

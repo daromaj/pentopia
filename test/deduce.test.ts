@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { deduce, explainSteps, TIER } from '@solver/deduce';
+import { deduce, deduceModel, explainSteps, TIER } from '@solver/deduce';
 import { buildModel, type Model } from '@solver/model';
 import { initState } from '@solver/state';
 import { propagateToFixpoint, type RuleId, type Step } from '@solver/propagate';
@@ -231,6 +231,13 @@ describe('deduce: determinism', () => {
     expect(a.unresolved).toBe(b.unresolved);
     expect(a.maxTier).toBe(b.maxTier);
     expect(a.tierHistogram).toEqual(b.tierHistogram);
+  });
+});
+
+describe('deduce: compiled model wrapper', () => {
+  it('preserves solution, trace, histogram, probe chains and cap metadata', () => {
+    const puzzle = decodeUrl('pentopia/10/10/2s9ziar5gbi6z6hai9s4//p');
+    expect(deduceModel(buildModel(puzzle))).toEqual(deduce(puzzle));
   });
 });
 
