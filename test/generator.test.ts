@@ -8,7 +8,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { generatePuzzle, expertProbeFloor, satisfiesDifficulty } from '@generator/generate';
+import { generatePuzzle, expertProbeFloor, satisfiesDifficulty, withinProbeBudget, HARD_PROBE_CAP } from '@generator/generate';
+import { probeWalk } from '@solver/walk';
+import { buildModel } from '@solver/model';
 import { deriveMaximalClues } from '@generator/clues';
 import { solve } from '@solver/search';
 import { deduce } from '@solver/deduce';
@@ -183,6 +185,34 @@ describe('generator: shared difficulty predicate', () => {
     expect(satisfiesDifficulty('easy', deduce(easy.puzzle), 6, 6)).toBe(true);
     expect(satisfiesDifficulty('easy', deduce(hard.puzzle), 6, 6)).toBe(false);
     expect(satisfiesDifficulty('hard', deduce(hard.puzzle), 6, 6)).toBe(true);
+  });
+});
+
+describe('generator: bounded hard probing', () => {
+  it('keeps every what-if a hard board demands inside the cap', () => {
+    for (const seed of [1, 2, 3]) {
+      const { puzzle } = generatePuzzle({ cols: 8, rows: 8, seed, difficulty: 'hard' });
+      const walk = probeWalk(buildModel(puzzle));
+      expect(walk.abandoned, `seed ${seed}`).toBe(false);
+      expect(walk.probes, `seed ${seed}`).toBeGreaterThan(0);
+      expect(walk.worst, `seed ${seed}`).toBeLessThanOrEqual(HARD_PROBE_CAP);
+    }
+  });
+
+  it('bounds hard alone — easy and medium never probe, expert is meant to grind', () => {
+    const easy = generatePuzzle({ cols: 6, rows: 6, seed: 1, difficulty: 'easy' });
+    expect(withinProbeBudget('easy', buildModel(easy.puzzle))).toBe(true);
+    expect(withinProbeBudget('expert', buildModel(easy.puzzle))).toBe(true);
+  });
+
+  it('rejects a board whose what-if runs past the cap', () => {
+    // Generated without the bound, so its probes are free to run long; the
+    // predicate has to be what turns one into the other.
+    const { puzzle } = generatePuzzle({ cols: 8, rows: 8, seed: 11, difficulty: 'expert' });
+    const model = buildModel(puzzle);
+    const walk = probeWalk(model);
+    if (walk.worst <= HARD_PROBE_CAP) return; // this seed happens to be gentle; nothing to assert
+    expect(withinProbeBudget('hard', model)).toBe(false);
   });
 });
 

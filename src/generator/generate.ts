@@ -22,7 +22,9 @@
  * FLOOR (reject too-trivial finished puzzles):
  *   easy   → none
  *   medium → require ≥1 cover-analysis OR arrow-forced-shade step
- *   hard   → require ≥1 probe-forcing step
+ *   hard   → require ≥1 probe-forcing step, and an interleaved solver must
+ *            spend at least one what-if of its own, each forcing at most
+ *            HARD_PROBE_CAP cells before it breaks (see `withinProbeBudget`)
  *   expert → require ≥1 probe-forcing-2 step, OR probe-forcing steps at or
  *            above a per-size threshold measured to sit comfortably above
  *            hard's distribution (see `expertProbeFloor` below and
@@ -48,7 +50,8 @@ import { validate } from '../core/validator';
 import { encodeUrl, decodeUrl } from '../core/codec/url';
 import { solveModel } from '../solver/search';
 import { deduceModel, type DeduceResult } from '../solver/deduce';
-import { buildModel } from '../solver/model';
+import { buildModel, type Model } from '../solver/model';
+import { probeWalk } from '../solver/walk';
 import type { RuleId } from '../solver/propagate';
 import { createRng } from './rng';
 import { placeShapes } from './place';
@@ -75,9 +78,10 @@ export interface GenerateOptions {
    * entry. Once passed, minimization abandons its current candidate and the
    * usual "exhausted attempts" error is thrown rather than accepting partial
    * minimization. Default:
-   * effectively unbounded (`Infinity`) for easy/medium/hard — their ceilings
-   * never reach the expensive depth-2 probe path — and ~60_000ms for expert,
-   * where depth-2 deduce() calls are the hot path during minimize.
+   * effectively unbounded (`Infinity`) for easy/medium — their ceilings never
+   * reach any probe path — ~240_000ms for hard, whose probe bound rejects most
+   * candidates, and ~60_000ms for expert, where depth-2 deduce() calls are the
+   * hot path during minimize.
    */
   readonly timeBudgetMs?: number;
   /** Optional diagnostics hook; it never changes candidate selection. */
@@ -132,14 +136,21 @@ const NODE_CAP = 200_000;
 const DEFAULT_TIME_BUDGET_MS: Record<Difficulty, number> = {
   easy: Infinity,
   medium: Infinity,
-  hard: Infinity,
+  // `hard` now has to clear the probe bound too, which rejects roughly nine in
+  // ten otherwise-valid candidates, so its attempt count went up with it. The
+  // wall-clock cap keeps a pathological seed from spinning a worker forever;
+  // 12x12 needs a median 18s and has a long tail, and a budget that expires is
+  // a board the caller has to replace, so the cap sits well past the tail.
+  hard: 240_000,
   expert: 60_000,
 };
 
 /**
- * Default `maxAttempts` per difficulty. Easy/medium/hard keep the original
- * flat 50 (unchanged — their floors are common enough that 50 attempts is
- * ample headroom). Expert's floor is a deliberate tail event: ad-hoc sampling
+ * Default `maxAttempts` per difficulty. Easy/medium keep the original flat 50
+ * (their floors are common enough that 50 attempts is ample headroom). Hard
+ * left that company when its probe bound landed: measured acceptance is ~10%
+ * of otherwise-valid candidates, and a 12x12 board took 5-46 attempts to find
+ * one, so 50 starved. Expert's floor is a deliberate tail event: ad-hoc sampling
  * of raw cap-7-minimized 8x8 puzzles (unfiltered by the floor) showed only
  * ~30% clear the expert probe floor at all, and per-attempt cost is
  * ~130-190ms, so 50 attempts (50-100 were observed needed at 8x8 in practice)
@@ -150,7 +161,7 @@ const DEFAULT_TIME_BUDGET_MS: Record<Difficulty, number> = {
 const DEFAULT_MAX_ATTEMPTS: Record<Difficulty, number> = {
   easy: 50,
   medium: 50,
-  hard: 50,
+  hard: 400,
   expert: 400,
 };
 
@@ -207,6 +218,42 @@ export function satisfiesDifficulty(
       // layout+minimize — but the realistic path is enough depth-1 probing.
       return h['probe-forcing-2'] >= 1 || h['probe-forcing'] >= expertProbeFloor(cols, rows);
   }
+}
+
+/**
+ * How far a `hard` what-if may run: assume one cell, and the contradiction has
+ * to land within this many forced cells. The bound exists because the hint
+ * layer has to be able to say *why* a probe breaks, and an argument that traces
+ * a dozen cells is not a sentence anybody can check.
+ *
+ * Measured over 30 seeds per size, a cap of 4 accepts 13% / 7% / 10% of
+ * otherwise-valid hard candidates at 8x8 / 10x10 / 12x12 — costly but flat in
+ * board size, which is why `hard` can still climb. Relaxing it to 8 would
+ * accept ~40%, at the price of what a hint can put into one sentence.
+ */
+export const HARD_PROBE_CAP = 4;
+
+/**
+ * Does this puzzle's probing stay inside what a hint can explain?
+ *
+ * Only `hard` is bounded. `easy`/`medium` never probe (their ceiling forbids
+ * it), and `expert` is the tier that deliberately asks for what-ifs a human has
+ * to grind — bounding it would erase the difference between the two.
+ *
+ * Kept out of `satisfiesDifficulty` on purpose: that one reads a finished
+ * `DeduceResult` and is cheap enough for any caller, while this re-propagates
+ * the board once per probe. It belongs at the single final acceptance point,
+ * never in the minimize loop.
+ */
+export function withinProbeBudget(difficulty: Difficulty, model: Model, deadline = Infinity): boolean {
+  if (difficulty !== 'hard') return true;
+  const walk = probeWalk(model, { cap: HARD_PROBE_CAP, deadline });
+  if (walk.abandoned || walk.worst > HARD_PROBE_CAP) return false;
+  // `satisfiesDifficulty` counts probe steps off the greedy log, which fires
+  // what-ifs on cells the cheap rules were about to hand over anyway. Requiring
+  // the interleaved walk to spend one too is what makes "hard" mean the player
+  // has to reason hypothetically, not that the solver felt like it.
+  return walk.probes > 0;
 }
 
 function clueCount(clues: Int16Array): number {
@@ -279,6 +326,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     const ded = deduceModel(finalModel);
     opts.observer?.onDeduce?.(performance.now() - finalDeduceStart);
     if (!satisfiesDifficulty(difficulty, ded, cols, rows)) continue;
+    if (!withinProbeBudget(difficulty, finalModel, deadline)) continue;
 
     const url = encodeUrl(puzzle);
     const reDecoded = decodeUrl(url);

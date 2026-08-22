@@ -16,4 +16,6 @@ export type { PropagationResult, Step, RuleId, PropagateOptions } from './propag
 export { solve, solveModel } from './search';
 export type { SolveResult, SolveOptions } from './search';
 export { deduce, deduceModel, explainSteps, TIER } from './deduce';
+export { probeWalk } from './walk';
+export type { ProbeWalkResult, ProbeWalkOptions } from './walk';
 export type { DeduceResult } from './deduce';
