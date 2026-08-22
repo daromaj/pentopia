@@ -91,9 +91,9 @@ const GEN_GOLDENS: GenGolden[] = [
     timeout: 8000,
   },
   {
-    cols: 6, rows: 6, difficulty: 'hard', seed: 2, url: 'pentopia/6/6/h8u9nck4h//p',
-    clueCount: 4, maxTier: 6,
-    hist: { 'clue-cell-exclusion': 1, 'no-touch-halo': 2, 'arrow-distance-bounds': 4, 'forced-placement': 2, 'cover-analysis': 1, 'clue-candidate': 1, 'probe-forcing': 23 },
+    cols: 6, rows: 6, difficulty: 'hard', seed: 2, url: 'pentopia/6/6/m3j8h2r1g1k//p',
+    clueCount: 5, maxTier: 6,
+    hist: { 'clue-cell-exclusion': 1, 'no-touch-halo': 2, 'arrow-distance-bounds': 5, 'arrow-forced-shade': 3, 'forced-placement': 2, 'cover-analysis': 4, 'probe-forcing': 3 },
     timeout: 8000,
   },
   {
@@ -103,9 +103,9 @@ const GEN_GOLDENS: GenGolden[] = [
     timeout: 8000,
   },
   {
-    cols: 8, rows: 8, difficulty: 'hard', seed: 7, url: 'pentopia/8/8/icj8hci4n8g4i4i2t6r1g//p',
-    clueCount: 10, maxTier: 6,
-    hist: { 'clue-cell-exclusion': 1, 'no-touch-halo': 4, 'arrow-distance-bounds': 9, 'arrow-forced-shade': 2, 'forced-placement': 4, 'cover-analysis': 2, 'probe-forcing': 26 },
+    cols: 8, rows: 8, difficulty: 'hard', seed: 7, url: 'pentopia/8/8/r5j3hak4o9g5j4j3j1p//p',
+    clueCount: 9, maxTier: 6,
+    hist: { 'clue-cell-exclusion': 1, 'no-touch-halo': 4, 'arrow-distance-bounds': 10, 'arrow-forced-shade': 7, 'forced-placement': 4, 'cover-analysis': 2, 'probe-forcing': 8 },
     timeout: 10000,
   },
   {
