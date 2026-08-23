@@ -56,7 +56,8 @@ import type { RuleId } from '../solver/propagate';
 import { createRng } from './rng';
 import { placeShapes } from './place';
 import { deriveMaximalClues } from './clues';
-import { minimizeClues } from './minimize';
+import { minimizeClues, sameSolution } from './minimize';
+import { timed } from './observe';
 import { signatureOf, type FlowProfile, type RatedCandidate } from './flow';
 
 export type Difficulty = 'easy' | 'medium' | 'hard' | 'expert';
@@ -189,14 +190,6 @@ export function expertProbeFloor(cols: number, rows: number): number {
   return Math.round(0.4 * cols * rows + 12);
 }
 
-function sameSolution(a: Solution, b: Solution): boolean {
-  const x = a.shaded;
-  const y = b.shaded;
-  if (x.length !== y.length) return false;
-  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
-  return true;
-}
-
 /** Is this finished puzzle hard *enough* for the requested difficulty? */
 export function satisfiesDifficulty(
   difficulty: Difficulty,
@@ -289,16 +282,13 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     //    deduce-solve within the difficulty cap. If even the fullest clue set
     //    overshoots the ceiling, this layout is hopeless — new layout.
     opts.observer?.onPhase?.('checking-uniqueness');
-    const modelStart = performance.now();
-    const maxModel = buildModel(maxPuzzle);
-    opts.observer?.onModelBuilt?.(performance.now() - modelStart);
-    const solveStart = performance.now();
-    const maxSolve = solveModel(maxModel, { maxSolutions: 2, nodeCap: NODE_CAP });
-    opts.observer?.onSolve?.(performance.now() - solveStart);
+    const maxModel = timed(() => buildModel(maxPuzzle), (ms) => opts.observer?.onModelBuilt?.(ms));
+    const maxSolve = timed(
+      () => solveModel(maxModel, { maxSolutions: 2, nodeCap: NODE_CAP }),
+      (ms) => opts.observer?.onSolve?.(ms),
+    );
     if (maxSolve.capped || maxSolve.solutions.length !== 1 || !sameSolution(maxSolve.solutions[0]!, answer)) continue;
-    const deduceStart = performance.now();
-    const maxDed = deduceModel(maxModel);
-    opts.observer?.onDeduce?.(performance.now() - deduceStart);
+    const maxDed = timed(() => deduceModel(maxModel), (ms) => opts.observer?.onDeduce?.(ms));
     if (!maxDed.solved || maxDed.maxTier > gateTier) continue;
 
     // 4. Minimize to a fixed point. A deadline abandons this candidate.
@@ -315,27 +305,23 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
 
     // 5/6. Solve first, then deduce, from one immutable compiled model.
     if (!validate(puzzle, answer).ok) continue;
-    const finalModelStart = performance.now();
-    const finalModel = buildModel(puzzle);
-    opts.observer?.onModelBuilt?.(performance.now() - finalModelStart);
-    const finalSolveStart = performance.now();
-    const finalSolve = solveModel(finalModel, { maxSolutions: 2, nodeCap: NODE_CAP });
-    opts.observer?.onSolve?.(performance.now() - finalSolveStart);
+    const finalModel = timed(() => buildModel(puzzle), (ms) => opts.observer?.onModelBuilt?.(ms));
+    const finalSolve = timed(
+      () => solveModel(finalModel, { maxSolutions: 2, nodeCap: NODE_CAP }),
+      (ms) => opts.observer?.onSolve?.(ms),
+    );
     if (finalSolve.capped || finalSolve.solutions.length !== 1 || !sameSolution(finalSolve.solutions[0]!, answer)) continue;
-    const finalDeduceStart = performance.now();
-    const ded = deduceModel(finalModel);
-    opts.observer?.onDeduce?.(performance.now() - finalDeduceStart);
+    const ded = timed(() => deduceModel(finalModel), (ms) => opts.observer?.onDeduce?.(ms));
     if (!satisfiesDifficulty(difficulty, ded, cols, rows)) continue;
     if (!withinProbeBudget(difficulty, finalModel, deadline)) continue;
 
     const url = encodeUrl(puzzle);
     const reDecoded = decodeUrl(url);
-    const codecModelStart = performance.now();
-    const codecModel = buildModel(reDecoded);
-    opts.observer?.onModelBuilt?.(performance.now() - codecModelStart, 'codec');
-    const codecSolveStart = performance.now();
-    const reSolve = solveModel(codecModel, { maxSolutions: 2, nodeCap: NODE_CAP });
-    opts.observer?.onSolve?.(performance.now() - codecSolveStart, 'codec');
+    const codecModel = timed(() => buildModel(reDecoded), (ms) => opts.observer?.onModelBuilt?.(ms, 'codec'));
+    const reSolve = timed(
+      () => solveModel(codecModel, { maxSolutions: 2, nodeCap: NODE_CAP }),
+      (ms) => opts.observer?.onSolve?.(ms, 'codec'),
+    );
     if (reSolve.capped || reSolve.solutions.length !== 1 || !sameSolution(reSolve.solutions[0]!, answer)) continue;
     if (performance.now() > deadline) continue;
 

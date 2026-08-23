@@ -28,7 +28,7 @@
 import type { Puzzle, Solution } from '../core/types';
 import { validate } from '../core/validator';
 import { buildModel } from './model';
-import { initState, unknownCells } from './state';
+import { freeShaded, initState, unknownCells } from './state';
 import { propagateToFixpoint, type RuleId, type Step } from './propagate';
 
 export interface DeduceResult {
@@ -74,25 +74,13 @@ export const TIER: Record<RuleId, number> = {
 };
 
 /**
- * Rules whose steps *shade* cells (the rest *exclude*), used by explainSteps as
- * a fallback. `cover-analysis` does both, so its steps carry an explicit
- * `kind`; a step's own `kind` always wins over this map when present.
+ * Every RuleId, in TIER's declaration order. TIER is exhaustiveness-checked
+ * against the RuleId union, so this list can never drift from it.
  */
-const SHADE_RULES: ReadonlySet<RuleId> = new Set<RuleId>(['arrow-forced-shade', 'forced-placement']);
+export const RULE_IDS = Object.keys(TIER) as readonly RuleId[];
 
 function emptyHistogram(): Record<RuleId, number> {
-  return {
-    'clue-cell-exclusion': 0,
-    'no-touch-halo': 0,
-    'placement-filtering': 0,
-    'arrow-distance-bounds': 0,
-    'arrow-forced-shade': 0,
-    'forced-placement': 0,
-    'cover-analysis': 0,
-    'clue-candidate': 0,
-    'probe-forcing': 0,
-    'probe-forcing-2': 0,
-  };
+  return Object.fromEntries(RULE_IDS.map((rule) => [rule, 0])) as Record<RuleId, number>;
 }
 
 /**
@@ -154,13 +142,11 @@ export function deduceModel(model: ReturnType<typeof buildModel>): DeduceResult 
     };
   }
 
-  const solution = solutionFromState(model.cols * model.rows, state);
+  const solution: Solution = { shaded: state.shaded.toUint8Array() };
 
   // Solved iff: no unknown cells remain, every shaded cell is covered by a
   // committed placement, and the full validator agrees.
-  const free = state.shaded.clone();
-  free.andNotAssign(state.committedCells);
-  const solved = unresolved === 0 && free.isEmpty() && validate(model.puzzle, solution).ok;
+  const solved = unresolved === 0 && freeShaded(state).isEmpty() && validate(model.puzzle, solution).ok;
 
   return {
     solved,
@@ -171,14 +157,6 @@ export function deduceModel(model: ReturnType<typeof buildModel>): DeduceResult 
     maxProbeChain,
     tierHistogram,
   };
-}
-
-function solutionFromState(n: number, state: { shaded: { forEach(cb: (i: number) => void): void } }): Solution {
-  const shaded = new Uint8Array(n);
-  state.shaded.forEach((i) => {
-    shaded[i] = 1;
-  });
-  return { shaded };
 }
 
 /**
@@ -193,7 +171,7 @@ function solutionFromState(n: number, state: { shaded: { forEach(cb: (i: number)
 export function explainSteps(steps: Step[], cols: number): string[] {
   const ref = (i: number): string => `r${Math.floor(i / cols)}c${i % cols}`;
   return steps.map((step) => {
-    const verb = step.kind ?? (SHADE_RULES.has(step.rule) ? 'shade' : 'exclude');
+    const verb = step.kind;
     const cells = step.cells.map(ref).join(', ');
     const detail = (step.detail ?? step.rule).replace(/clue (\d+)/g, (_m, n: string) => `clue ${ref(Number(n))}`);
     return `[${step.rule}] ${detail} -> ${verb} ${cells}`;

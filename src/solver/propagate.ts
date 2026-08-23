@@ -81,7 +81,7 @@
 import type { ClueInfo, Model } from './model';
 import { Dir } from '../core/types';
 import { BitBoard } from './board';
-import { cloneState, commitPlacement, type SolveState } from './state';
+import { cloneState, commitPlacement, freeShaded, unknownCells, type SolveState } from './state';
 
 /** Human-readable direction name (const enums have no reverse mapping). */
 function dirName(dir: Dir): string {
@@ -115,12 +115,8 @@ export interface Step {
   readonly detail?: string;
   /** Clue cell that directly caused a clue-specific deduction. */
   readonly sourceClue?: number;
-  /**
-   * Whether this step *shaded* or *excluded* its cells. Most rules are
-   * unambiguous by `rule` alone (see deduce's `SHADE_RULES`); `cover-analysis`
-   * does both, so it always sets this explicitly.
-   */
-  readonly kind?: 'shade' | 'exclude';
+  /** Whether this step *shaded* or *excluded* its cells. */
+  readonly kind: 'shade' | 'exclude';
   /**
    * Probe steps only (`probe-forcing`/`probe-forcing-2`): how many *extra* cells
    * the inner what-if had to force before the contradiction surfaced — i.e. the
@@ -190,6 +186,9 @@ interface Ctx {
   readonly steps: Step[];
   changed: boolean;
   contradiction: string | null;
+  /** Resolved options, carried so probe recursion reuses them verbatim. */
+  readonly coverAnalysis: boolean;
+  readonly clueCandidate: boolean;
   /** Wall-clock deadline for the expensive probe loops (Infinity = none). */
   readonly deadline: number;
   /** Set once the deadline tripped, so the outer loop stops escalating. */
@@ -396,9 +395,7 @@ function rulePlacementFiltering(ctx: Ctx): void {
 
 function ruleForcedPlacement(ctx: Ctx): void {
   const { model, state } = ctx;
-  // Free shaded cells: shaded but not yet part of a committed placement.
-  const free = state.shaded.clone();
-  free.andNotAssign(state.committedCells);
+  const free = freeShaded(state);
   let contradiction = false;
   free.forEach((c) => {
     if (contradiction) return;
@@ -444,6 +441,31 @@ function ruleForcedPlacement(ctx: Ctx): void {
       }
     }
   });
+}
+
+/**
+ * Intersect `cells` and `halo` over a set of placements. Returns null for an
+ * empty set, else the intersections plus how many placements were folded in.
+ */
+function intersectPlacements(
+  model: Model,
+  ids: Iterable<number>,
+): { cells: BitBoard; halo: BitBoard; count: number } | null {
+  let cells: BitBoard | null = null;
+  let halo: BitBoard | null = null;
+  let count = 0;
+  for (const p of ids) {
+    const pl = model.placements[p]!;
+    count++;
+    if (cells === null) {
+      cells = pl.cells.clone();
+      halo = pl.halo.clone();
+    } else {
+      cells.andAssign(pl.cells);
+      halo!.andAssign(pl.halo);
+    }
+  }
+  return cells === null ? null : { cells, halo: halo!, count };
 }
 
 /**
@@ -502,30 +524,17 @@ function ruleCoverAnalysis(ctx: Ctx): void {
   }
 
   // (b)/(c) Common-cell forcing and common-halo exclusion over free shaded cells.
-  const free = state.shaded.clone();
-  free.andNotAssign(state.committedCells);
   const forcedShade: number[] = [];
   const forcedExclude: number[] = [];
-  free.forEach((c) => {
-    let interCells: BitBoard | null = null;
-    let interHalo: BitBoard | null = null;
-    for (const p of model.placementsCoveringCell[c]!) {
-      if (state.alive[p] !== 1) continue;
-      const pl = model.placements[p]!;
-      if (interCells === null) {
-        interCells = pl.cells.clone();
-        interHalo = pl.halo.clone();
-      } else {
-        interCells.andAssign(pl.cells);
-        interHalo!.andAssign(pl.halo);
-      }
-    }
+  freeShaded(state).forEach((c) => {
+    const alive = model.placementsCoveringCell[c]!.filter((p) => state.alive[p] === 1);
+    const inter = intersectPlacements(model, alive);
     // No alive coverer → forced-placement reports the contradiction; skip.
-    if (interCells === null) return;
-    interCells.forEach((d) => {
+    if (inter === null) return;
+    inter.cells.forEach((d) => {
       if (d !== c && shade(ctx, d)) forcedShade.push(d);
     });
-    interHalo!.forEach((d) => {
+    inter.halo.forEach((d) => {
       if (exclude(ctx, d)) forcedExclude.push(d);
     });
   });
@@ -663,29 +672,17 @@ function ruleClueCandidate(ctx: Ctx): void {
     // Pass 2: per arrowed ray, intersect cells / halos over candidates with t ∈ T.
     for (let k = 0; k < arrowed.length; k++) {
       const byT = perRay[k]!;
-      let interCells: BitBoard | null = null;
-      let interHalo: BitBoard | null = null;
-      let count = 0;
+      const ids: number[] = [];
       for (const t of T) {
         const list = byT.get(t);
-        if (list === undefined) continue;
-        for (const p of list) {
-          const pl = model.placements[p]!;
-          count++;
-          if (interCells === null) {
-            interCells = pl.cells.clone();
-            interHalo = pl.halo.clone();
-          } else {
-            interCells.andAssign(pl.cells);
-            interHalo!.andAssign(pl.halo);
-          }
-        }
+        if (list !== undefined) ids.push(...list);
       }
-      // `count === 0` is impossible: T ⊆ tSets[k], so byT has ≥1 candidate at some t ∈ T.
-      if (interCells === null) continue;
+      // An empty set is impossible: T ⊆ tSets[k], so byT has ≥1 candidate at some t ∈ T.
+      const inter = intersectPlacements(model, ids);
+      if (inter === null) continue;
       const dir = arrowed[k]!;
       const shadeCells: number[] = [];
-      interCells.forEach((d) => {
+      inter.cells.forEach((d) => {
         if (shade(ctx, d)) shadeCells.push(d);
       });
       if (shadeCells.length > 0) {
@@ -694,11 +691,11 @@ function ruleClueCandidate(ctx: Ctx): void {
           sourceClue: clue.index,
           kind: 'shade',
           cells: shadeCells,
-          detail: `clue ${clue.index}: ${count} candidate placement(s) for the ${dirName(dir)} ray${tInfo}`,
+          detail: `clue ${clue.index}: ${inter.count} candidate placement(s) for the ${dirName(dir)} ray${tInfo}`,
         });
       }
       const exclCells: number[] = [];
-      interHalo!.forEach((d) => {
+      inter.halo.forEach((d) => {
         if (exclude(ctx, d)) exclCells.push(d);
       });
       if (exclCells.length > 0) {
@@ -707,7 +704,7 @@ function ruleClueCandidate(ctx: Ctx): void {
           sourceClue: clue.index,
           kind: 'exclude',
           cells: exclCells,
-          detail: `clue ${clue.index}: common border of ${count} candidate placement(s) for the ${dirName(dir)} ray${tInfo}`,
+          detail: `clue ${clue.index}: common border of ${inter.count} candidate placement(s) for the ${dirName(dir)} ray${tInfo}`,
         });
       }
     }
@@ -743,20 +740,6 @@ function ruleClueCandidate(ctx: Ctx): void {
  * `ctx.timedOut`) and propagation returns whatever it decided — never a spurious
  * contradiction (a not-yet-found contradiction just means "no force here").
  */
-interface ProbeInnerOpts {
-  readonly coverAnalysis: boolean;
-  readonly clueCandidate: boolean;
-}
-
-/** Undecided cells in natural (ascending) order. */
-function undecidedNatural(ctx: Ctx): number[] {
-  const { model, state } = ctx;
-  const n = model.cols * model.rows;
-  const out: number[] = [];
-  for (let u = 0; u < n; u++) if (!state.shaded.test(u) && !state.excluded.test(u)) out.push(u);
-  return out;
-}
-
 /**
  * Undecided cells ordered for depth-2 probing: cells adjacent to an
  * already-decided cell, or lying on some clue's ray, come first — those are
@@ -765,28 +748,63 @@ function undecidedNatural(ctx: Ctx): number[] {
  */
 function probeOrder(ctx: Ctx): number[] {
   const { model, state } = ctx;
-  const n = model.cols * model.rows;
   const decidedAdj = state.shaded.clone().orAssign(state.excluded).kingHalo();
   const priority: number[] = [];
   const rest: number[] = [];
-  for (let u = 0; u < n; u++) {
-    if (state.shaded.test(u) || state.excluded.test(u)) continue;
+  unknownCells(model, state).forEach((u) => {
     if (decidedAdj.test(u) || model.clueRayMask.test(u)) priority.push(u);
     else rest.push(u);
-  }
+  });
   return priority.concat(rest);
 }
 
-function ruleProbe(ctx: Ctx, opts: ProbeInnerOpts, depth: 1 | 2): void {
+function ruleProbe(ctx: Ctx, depth: 1 | 2): void {
   const { model, state } = ctx;
   const ruleId: RuleId = depth === 2 ? 'probe-forcing-2' : 'probe-forcing';
   const inner: PropagateOptions = {
-    coverAnalysis: opts.coverAnalysis,
-    clueCandidate: opts.clueCandidate,
+    coverAnalysis: ctx.coverAnalysis,
+    clueCandidate: ctx.clueCandidate,
     probeDepth: (depth - 1) as 0 | 1,
     deadline: ctx.deadline,
   };
-  const cells = depth === 2 ? probeOrder(ctx) : undecidedNatural(ctx);
+
+  // Assume one value for cell `u` and re-propagate on a clone. On a
+  // contradiction, force the opposite value and log the step; we do NOT also
+  // probe the other value then: if that value ALSO contradicts (the board is
+  // unsatisfiable), forcing here reproduces it on the very next fixpoint pass —
+  // the outer propagation over the now-decided u is at least as strong as this
+  // probe's inner propagation, so it re-derives the same contradiction.
+  // Skipping the second what-if is what halves probe cost on every force, and
+  // it compounds through the depth-2 → depth-1 nesting. Returns true iff the
+  // assumption contradicted (i.e. u got forced).
+  const tryValue = (u: number, assume: 'shade' | 'exclude'): boolean => {
+    const trial = cloneState(state);
+    (assume === 'shade' ? trial.shaded : trial.excluded).set(u);
+    const result = propagateToFixpoint(model, trial, inner);
+    if (result.status !== 'contradiction') return false;
+    const forced = assume === 'shade' ? exclude(ctx, u) : shade(ctx, u);
+    if (forced) {
+      // Decided cells before the what-if; the difference after propagation
+      // (minus the +1 assumed cell) is the forced-move chain length. `state`
+      // is untouched until the force above, so measuring it here matches the
+      // pre-clone reading. Only paid on an actual force, not every probe.
+      const baseDecided = state.shaded.popcount() + state.excluded.popcount() - 1;
+      const probeChain = Math.max(0, trial.shaded.popcount() + trial.excluded.popcount() - baseDecided - 1);
+      // Carry the inner contradiction's reason (which concrete clue/cell broke)
+      // so the hint layer can tell the player *why*, not just *that*, it breaks.
+      const assumption = assume === 'shade' ? `shading cell ${u}` : `leaving cell ${u} unshaded`;
+      ctx.steps.push({
+        rule: ruleId,
+        kind: assume === 'shade' ? 'exclude' : 'shade',
+        cells: [u],
+        probeChain,
+        detail: `${assumption} forces a contradiction (depth ${depth}): ${result.reason}`,
+      });
+    }
+    return true;
+  };
+
+  const cells = depth === 2 ? probeOrder(ctx) : unknownCells(model, state).toArray();
   for (const u of cells) {
     // A cell decided by an earlier force in this same sweep is no longer a probe.
     if (state.shaded.test(u) || state.excluded.test(u)) continue;
@@ -795,43 +813,11 @@ function ruleProbe(ctx: Ctx, opts: ProbeInnerOpts, depth: 1 | 2): void {
       return;
     }
 
-    const ifShaded = cloneState(state);
-    ifShaded.shaded.set(u);
-    const shadeResult = propagateToFixpoint(model, ifShaded, inner);
-    if (shadeResult.status === 'contradiction') {
-      // Shading u is impossible → u must be excluded. We do NOT also probe the
-      // "leave u unshaded" branch: if that branch ALSO contradicts (the board is
-      // unsatisfiable), excluding u here reproduces it on the very next fixpoint
-      // pass — the outer propagation over the now-excluded u is at least as
-      // strong as this probe's inner propagation, so it re-derives the same
-      // contradiction. Skipping the second what-if is what halves probe cost on
-      // every force, and it compounds through the depth-2 → depth-1 nesting.
-      if (exclude(ctx, u)) {
-        // Decided cells before the what-if; the difference after propagation
-        // (minus the +1 assumed cell) is the forced-move chain length. `state`
-        // is untouched until this exclude(), so measuring it here matches the
-        // old pre-clone reading. Only paid on an actual force, not every probe.
-        const baseDecided = state.shaded.popcount() + state.excluded.popcount() - 1;
-        const probeChain = Math.max(0, ifShaded.shaded.popcount() + ifShaded.excluded.popcount() - baseDecided - 1);
-        // Carry the inner contradiction's reason (which concrete clue/cell broke)
-        // so the hint layer can tell the player *why*, not just *that*, it breaks.
-        ctx.steps.push({ rule: ruleId, kind: 'exclude', cells: [u], probeChain, detail: `shading cell ${u} forces a contradiction (depth ${depth}): ${shadeResult.reason}` });
-        if (depth === 2) return; // fall back to the cheap fixpoint before more depth-2 work
-      }
+    if (tryValue(u, 'shade')) {
+      if (depth === 2) return; // fall back to the cheap fixpoint before more depth-2 work
       continue;
     }
-
-    const ifExcluded = cloneState(state);
-    ifExcluded.excluded.set(u);
-    const excludeResult = propagateToFixpoint(model, ifExcluded, inner);
-    if (excludeResult.status === 'contradiction') {
-      if (shade(ctx, u)) {
-        const baseDecided = state.shaded.popcount() + state.excluded.popcount() - 1;
-        const probeChain = Math.max(0, ifExcluded.shaded.popcount() + ifExcluded.excluded.popcount() - baseDecided - 1);
-        ctx.steps.push({ rule: ruleId, kind: 'shade', cells: [u], probeChain, detail: `leaving cell ${u} unshaded forces a contradiction (depth ${depth}): ${excludeResult.reason}` });
-        if (depth === 2) return;
-      }
-    }
+    if (tryValue(u, 'exclude') && depth === 2) return;
   }
   checkShadedExcludedDisjoint(ctx);
 }
@@ -887,7 +873,17 @@ export function propagateToFixpoint(
   const clueCandidate = opts?.clueCandidate ?? true;
   const probeDepth = opts?.probeDepth ?? 0;
   const deadline = opts?.deadline ?? Infinity;
-  const ctx: Ctx = { model, state, steps: [], changed: false, contradiction: null, deadline, timedOut: false };
+  const ctx: Ctx = {
+    model,
+    state,
+    steps: [],
+    changed: false,
+    contradiction: null,
+    coverAnalysis,
+    clueCandidate,
+    deadline,
+    timedOut: false,
+  };
 
   // Clue-cell exclusion is idempotent; apply it up front.
   ruleClueCellExclusion(ctx);
@@ -895,7 +891,6 @@ export function propagateToFixpoint(
   if (ctx.contradiction !== null)
     return { status: 'contradiction', steps: ctx.steps, reason: ctx.contradiction };
 
-  const innerOpts: ProbeInnerOpts = { coverAnalysis, clueCandidate };
   let outerChanged = true;
   while (outerChanged && ctx.contradiction === null && !ctx.timedOut) {
     outerChanged = false;
@@ -925,7 +920,7 @@ export function propagateToFixpoint(
 
     if (probeDepth >= 1) {
       ctx.changed = false;
-      ruleProbe(ctx, innerOpts, 1);
+      ruleProbe(ctx, 1);
       if (ctx.contradiction !== null) break;
       if (ctx.timedOut) break;
       if (ctx.changed) {
@@ -936,7 +931,7 @@ export function propagateToFixpoint(
 
     if (probeDepth >= 2) {
       ctx.changed = false;
-      ruleProbe(ctx, innerOpts, 2);
+      ruleProbe(ctx, 2);
       if (ctx.contradiction !== null) break;
       if (ctx.timedOut) break;
       if (ctx.changed) outerChanged = true;

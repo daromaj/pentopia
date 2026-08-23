@@ -15,17 +15,7 @@
  * before each shift, and a final board-mask AND clears any padding bits.
  */
 
-/** The 8 king-move neighbour offsets (dx, dy). */
-const KING8: readonly (readonly [number, number])[] = [
-  [-1, -1],
-  [0, -1],
-  [1, -1],
-  [-1, 0],
-  [1, 0],
-  [-1, 1],
-  [0, 1],
-  [1, 1],
-];
+import { KING8 } from '../core/grid';
 
 interface Geom {
   readonly cols: number;
@@ -139,6 +129,11 @@ export class BitBoard {
     return new BitBoard(this.cols, this.rows, this.w.slice());
   }
 
+  /** A board with every real cell set (padding bits clear). */
+  static full(cols: number, rows: number): BitBoard {
+    return new BitBoard(cols, rows, getGeom(cols, rows).boardMask.slice());
+  }
+
   set(i: number): void {
     this.w[i >>> 5]! |= 1 << (i & 31);
   }
@@ -221,6 +216,25 @@ export class BitBoard {
     return out;
   }
 
+  /** Lowest set cell index, or -1 when empty. */
+  firstSet(): number {
+    const w = this.w;
+    for (let k = 0; k < this.words; k++) {
+      const word = w[k]!;
+      if (word !== 0) return (k << 5) + popcount32((word & -word) - 1);
+    }
+    return -1;
+  }
+
+  /** The set as a dense 0/1 array over all `n` cells. */
+  toUint8Array(): Uint8Array {
+    const out = new Uint8Array(this.n);
+    this.forEach((i) => {
+      out[i] = 1;
+    });
+    return out;
+  }
+
   /**
    * Whole-board directional shift by `(dx, dy)` with edge masking, returning
    * a new board. A source cell `(x, y)` lands at `(x+dx, y+dy)`; cells that
@@ -229,12 +243,19 @@ export class BitBoard {
    */
   shift(dx: number, dy: number): BitBoard {
     const g = this.geom;
-    const scratch = this.w.slice();
     // Strip the source column that a horizontal step would wrap across a row.
-    if (dx > 0) for (let k = 0; k < g.words; k++) scratch[k]! &= ~g.rightColMask[k]!;
-    else if (dx < 0) for (let k = 0; k < g.words; k++) scratch[k]! &= ~g.leftColMask[k]!;
+    // A purely vertical shift wraps nothing, so it reads `this.w` directly
+    // (shiftInto never mutates its source).
+    let src = this.w;
+    if (dx > 0) {
+      src = this.w.slice();
+      for (let k = 0; k < g.words; k++) src[k]! &= ~g.rightColMask[k]!;
+    } else if (dx < 0) {
+      src = this.w.slice();
+      for (let k = 0; k < g.words; k++) src[k]! &= ~g.leftColMask[k]!;
+    }
     const out = new Uint32Array(g.words);
-    shiftInto(scratch, out, dy * g.cols + dx, g.words);
+    shiftInto(src, out, dy * g.cols + dx, g.words);
     // Clear padding bits and any out-of-range landings.
     for (let k = 0; k < g.words; k++) out[k]! &= g.boardMask[k]!;
     return new BitBoard(this.cols, this.rows, out);

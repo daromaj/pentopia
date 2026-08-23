@@ -55,26 +55,16 @@ export function cloneState(state: SolveState): SolveState {
   };
 }
 
-/**
- * Cells still unknown: neither shaded nor excluded. Returns a fresh BitBoard
- * (`board ~ shaded ~ excluded`, masked to the real cells via `boardMask`
- * already baked into the shifts — here we just start from all-cells).
- */
+/** Cells still unknown: neither shaded nor excluded. Returns a fresh BitBoard. */
 export function unknownCells(model: Model, state: SolveState): BitBoard {
-  const all = new BitBoard(model.cols, model.rows);
-  for (let i = 0; i < model.cols * model.rows; i++) all.set(i);
-  all.andNotAssign(state.shaded);
-  all.andNotAssign(state.excluded);
-  return all;
+  return BitBoard.full(model.cols, model.rows)
+    .andNotAssign(state.shaded)
+    .andNotAssign(state.excluded);
 }
 
-/** True once no cell is unknown (every cell is shaded or excluded). */
-export function isFullyDecided(model: Model, state: SolveState): boolean {
-  const n = model.cols * model.rows;
-  for (let i = 0; i < n; i++) {
-    if (!state.shaded.test(i) && !state.excluded.test(i)) return false;
-  }
-  return true;
+/** Free shaded cells: shaded but not yet part of a committed placement. Returns a fresh BitBoard. */
+export function freeShaded(state: SolveState): BitBoard {
+  return state.shaded.clone().andNotAssign(state.committedCells);
 }
 
 /**

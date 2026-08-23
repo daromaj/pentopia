@@ -27,19 +27,19 @@ export function deriveMaximalClues(cols: number, rows: number, shaded: Uint8Arra
       const i = idx(x, y, cols);
       if (shaded[i] === 1) continue; // shaded cells never carry a clue (rule 4)
 
-      const dists: (number | null)[] = [];
       let min = Infinity;
+      let mask = 0;
       for (const dir of DIRS) {
         const d = rayDistance(x, y, dir, cols, rows, isShaded);
-        dists.push(d);
-        if (d !== null && d < min) min = d;
+        if (d === null) continue;
+        if (d < min) {
+          min = d;
+          mask = dirBit(dir);
+        } else if (d === min) {
+          mask |= dirBit(dir);
+        }
       }
       if (min === Infinity) continue; // no shaded cell in any direction → NO_CLUE
-
-      let mask = 0;
-      for (let k = 0; k < DIRS.length; k++) {
-        if (dists[k] === min) mask |= dirBit(DIRS[k]!);
-      }
       clues[i] = mask as ClueValue;
     }
   }

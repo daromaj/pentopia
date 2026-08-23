@@ -37,7 +37,7 @@ import { buildModel } from '../solver/model';
 import type { Model } from '../solver/model';
 import { initState } from '../solver/state';
 import { propagateToFixpoint } from '../solver/propagate';
-import type { RuleId, Step } from '../solver/propagate';
+import type { Step } from '../solver/propagate';
 import { SHADED, MARKED_EMPTY, UNTOUCHED } from './state';
 
 export interface Hint {
@@ -97,13 +97,6 @@ function refFromDetail(detail: string | undefined, re: RegExp, cols: number): st
   const m = detail.match(re);
   if (!m) return null;
   return ref(Number(m[1]), cols);
-}
-
-/** Mirrors deduce.ts's own fallback map, for the (currently always-absent-in-practice) case a Step omits `kind`. */
-const SHADE_RULES: ReadonlySet<RuleId> = new Set<RuleId>(['arrow-forced-shade', 'forced-placement']);
-
-function stepKind(step: Step): 'shade' | 'exclude' {
-  return step.kind ?? (SHADE_RULES.has(step.rule) ? 'shade' : 'exclude');
 }
 
 /**
@@ -232,7 +225,7 @@ function findErrorHint(cellState: Uint8Array, solution: Solution, cols: number):
 function firstActionableStep(steps: readonly Step[], puzzle: Puzzle, cellState: Uint8Array, cols: number): Hint | null {
   for (const step of steps) {
     if (step.rule === 'placement-filtering') continue;
-    const kind = stepKind(step);
+    const kind = step.kind;
     const undecided = step.cells.filter((c) => {
       if (!isActionable(puzzle, c)) return false;
       return kind === 'shade' ? cellState[c] !== SHADED : cellState[c] !== MARKED_EMPTY;

@@ -50,15 +50,17 @@ export function placeShapes(
   // `forbidden` = occupied cells plus their king-halo — a new placement may not
   // touch any of these. Recomputed after each successful placement.
   let forbidden = new BitBoard(cols, rows);
-  const used = new Uint8Array(bankSize);
+  // Still-unused bank piece indices, ascending; a used piece is spliced out,
+  // which preserves the order (and hence the RNG-indexed pick sequence).
+  const avail: number[] = [];
+  for (let i = 0; i < bankSize; i++) avail.push(i);
   let placed = 0;
 
   for (let attempt = 0; attempt < maxAttempts && placed < target; attempt++) {
     // Pick a random still-unused bank piece.
-    const avail: number[] = [];
-    for (let i = 0; i < bankSize; i++) if (used[i] === 0) avail.push(i);
     if (avail.length === 0) break;
-    const pi = avail[randInt(rng, 0, avail.length)]!;
+    const pick = randInt(rng, 0, avail.length);
+    const pi = avail[pick]!;
 
     const orients = pieceOrients[pi]!;
     const orient = orients[randInt(rng, 0, orients.length)]!;
@@ -78,16 +80,12 @@ export function placeShapes(
     if (cells.intersects(forbidden)) continue;
 
     occupied.orAssign(cells);
-    used[pi] = 1;
+    avail.splice(pick, 1);
     placed++;
     forbidden = occupied.clone().orAssign(occupied.kingHalo());
   }
 
   if (placed < target) return null;
 
-  const shaded = new Uint8Array(cols * rows);
-  occupied.forEach((i) => {
-    shaded[i] = 1;
-  });
-  return { shaded };
+  return { shaded: occupied.toUint8Array() };
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { dirBit, Dir, NO_CLUE, type Puzzle, type Solution } from '@core/types';
 import { deduce } from '@solver/deduce';
 import { candidateSeed, generatePuzzle, generateRatedCandidate, SEED_BUMPS, type Difficulty, type GenerateResult } from '@generator/generate';
-import { distanceFlow, scoreFlow, selectCandidate, signatureOf, type FlowSignature, type RatedCandidate } from '@generator/flow';
+import { distanceFlow, scoreFlow, signatureOf, type FlowSignature } from '@generator/flow';
 import { prioritizeClueRemovals } from '@generator/minimize';
 import type { RuleId } from '@solver/propagate';
 
@@ -57,13 +57,9 @@ describe('flow profiles', () => {
     expect(scoreFlow('shape-chain', signature({ largestCascadeShare: 1 }), context)).toBeGreaterThan(scoreFlow('shape-chain', signature(), context));
     expect(scoreFlow('split-front', signature({ earlySourceDispersion: 1 }), context)).toBeGreaterThan(scoreFlow('split-front', signature(), context));
   });
-  it('zeros probe distance on easy and picks lower candidate index on ties', () => {
+  it('zeros probe distance on easy', () => {
     const a = signature(), b = signature({ probeChainShare: 1 });
     expect(distanceFlow(a, b, { ...context, difficulty: 'easy' })).toBe(0);
-    const board = generatePuzzle({ cols: 6, rows: 6, seed: 1, difficulty: 'easy' });
-    const candidates = [1, 0].map((candidateIndex) => ({ ...board, candidateIndex, signature: a })) as RatedCandidate[];
-    expect(selectCandidate('crossfire', candidates, context).candidateIndex).toBe(0);
-    expect(() => selectCandidate('crossfire', [], context)).toThrow(/must not be empty/);
   });
 
   it('is invariant under every square-board dihedral symmetry', () => {

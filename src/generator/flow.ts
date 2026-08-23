@@ -1,5 +1,6 @@
-import { dirBit, Dir, NO_CLUE, type Puzzle, type Solution } from '../core/types';
-import { deduceModel } from '../solver/deduce';
+import { dirBit, Dir, DIRS, NO_CLUE, type Puzzle, type Solution } from '../core/types';
+import { rayDistance } from '../core/grid';
+import { deduceModel, RULE_IDS } from '../solver/deduce';
 import { buildModel } from '../solver/model';
 import type { RuleId } from '../solver/propagate';
 import type { Difficulty, GenerateResult, GenerationObserver } from './generate';
@@ -19,8 +20,7 @@ export interface FlowSignature {
 export interface FlowContext { readonly difficulty: Difficulty; readonly rung: number; }
 export interface RatedCandidate extends GenerateResult { readonly candidateIndex: number; readonly signature: FlowSignature; }
 
-const RULES: readonly RuleId[] = ['clue-cell-exclusion', 'no-touch-halo', 'placement-filtering', 'arrow-distance-bounds', 'arrow-forced-shade', 'forced-placement', 'cover-analysis', 'clue-candidate', 'probe-forcing', 'probe-forcing-2'];
-const diagonal = (p: Puzzle) => Math.hypot(p.cols - 1, p.rows - 1) || 1;
+const diagonal = (cols: number, rows: number) => Math.hypot(cols - 1, rows - 1) || 1;
 const dispersion = (cells: readonly number[], cols: number, rows: number) => {
   if (cells.length < 2) return 0;
   let total = 0, pairs = 0;
@@ -31,7 +31,7 @@ const dispersion = (cells: readonly number[], cols: number, rows: number) => {
     );
     pairs++;
   }
-  return Math.min(1, total / pairs / diagonal({ cols, rows } as Puzzle));
+  return Math.min(1, total / pairs / diagonal(cols, rows));
 };
 function canonical(puzzle: Puzzle, answer: Solution): { puzzle: Puzzle; answer: Solution } {
   if (puzzle.cols !== puzzle.rows) return { puzzle, answer };
@@ -52,10 +52,14 @@ function canonical(puzzle: Puzzle, answer: Solution): { puzzle: Puzzle; answer: 
   }
   return { puzzle: best!.puzzle, answer: best!.answer };
 }
-function tieDistance(puzzle: Puzzle, answer: Solution, clue: number): number {
+/** Distance from a clue to the answer's nearest shaded cell along its first hitting arrowed ray, 0 when none hits. */
+export function tieDistance(puzzle: Puzzle, answer: Solution, clue: number): number {
   const x = clue % puzzle.cols, y = Math.floor(clue / puzzle.cols), mask = puzzle.clues[clue]!;
-  const directions: readonly [number, number, Dir][] = [[0, -1, Dir.Up], [0, 1, Dir.Down], [-1, 0, Dir.Left], [1, 0, Dir.Right]];
-  for (const [dx, dy, dir] of directions) if ((mask & dirBit(dir)) !== 0) for (let d = 1;; d++) { const xx = x + dx * d, yy = y + dy * d; if (xx < 0 || yy < 0 || xx >= puzzle.cols || yy >= puzzle.rows) break; if (answer.shaded[yy * puzzle.cols + xx]) return d; }
+  for (const dir of DIRS) {
+    if ((mask & dirBit(dir)) === 0) continue;
+    const d = rayDistance(x, y, dir, puzzle.cols, puzzle.rows, (i) => answer.shaded[i] === 1);
+    if (d !== null) return d;
+  }
   return 0;
 }
 export function signatureOf(result: GenerateResult, observer?: GenerationObserver): FlowSignature {
@@ -75,7 +79,7 @@ export function signatureOf(result: GenerateResult, observer?: GenerationObserve
   let chain = 0, largest = 0, links = 0, placements = 0, reset = true;
   for (const step of deduction.steps) { if (step.sourceClue !== undefined || step.rule === 'cover-analysis' || step.rule.startsWith('probe-')) reset = true; if (step.rule === 'forced-placement') { placements++; if (reset) chain = 1; else { chain++; links++; } largest = Math.max(largest, chain); reset = false; } }
   const technical = deduction.steps.filter((step) => step.rule !== 'clue-cell-exclusion'); const total = technical.length || 1;
-  const histogram = Object.fromEntries(RULES.map((rule) => [rule, technical.filter((step) => step.rule === rule).length / total])) as Record<RuleId, number>;
+  const histogram = Object.fromEntries(RULE_IDS.map((rule) => [rule, technical.filter((step) => step.rule === rule).length / total])) as Record<RuleId, number>;
   const signature = { arrowCardinality: counts.map((count) => count / (clues.length || 1)) as unknown as readonly [number, number, number, number], meanTieDistance: ties / (clues.length || 1) / Math.max(puzzle.cols, puzzle.rows), clueDispersion: dispersion(clues, puzzle.cols, puzzle.rows), earlySourceShare: sources.length / (clues.length || 1), earlySourceDispersion: dispersion(sources, puzzle.cols, puzzle.rows), cascadeLinkShare: placements < 2 ? 0 : links / (placements - 1), largestCascadeShare: placements ? largest / placements : 0, ruleHistogram: histogram, probeChainShare: deduction.maxProbeChain / (puzzle.cols * puzzle.rows) };
   observer?.onScoring?.(performance.now() - scoringStart);
   return signature;
@@ -88,6 +92,5 @@ export function scoreFlow(profile: FlowProfile, s: FlowSignature, context: FlowC
   return .55 * s.earlySourceDispersion + .3 * s.earlySourceShare + .15 * s.clueDispersion;
 }
 export function distanceFlow(a: FlowSignature, b: FlowSignature, context: FlowContext): number {
-  const weights = [.15, .15, .1, .15, .15, .1, .1, .08, context.difficulty === 'easy' ? 0 : .02]; const sum = weights.reduce((x, y) => x + y, 0); const hist = RULES.reduce((n, rule) => n + Math.abs(a.ruleHistogram[rule] - b.ruleHistogram[rule]), 0); const values = [a.arrowCardinality.reduce((n, value, i) => n + Math.abs(value - b.arrowCardinality[i]!), 0), Math.abs(a.meanTieDistance - b.meanTieDistance), Math.abs(a.clueDispersion - b.clueDispersion), Math.abs(a.earlySourceShare - b.earlySourceShare), Math.abs(a.earlySourceDispersion - b.earlySourceDispersion), Math.abs(a.cascadeLinkShare - b.cascadeLinkShare), Math.abs(a.largestCascadeShare - b.largestCascadeShare), hist, Math.abs(a.probeChainShare - b.probeChainShare)]; return values.reduce((n, value, i) => n + value * weights[i]!, 0) / sum;
+  const weights = [.15, .15, .1, .15, .15, .1, .1, .08, context.difficulty === 'easy' ? 0 : .02]; const sum = weights.reduce((x, y) => x + y, 0); const hist = RULE_IDS.reduce((n, rule) => n + Math.abs(a.ruleHistogram[rule] - b.ruleHistogram[rule]), 0); const values = [a.arrowCardinality.reduce((n, value, i) => n + Math.abs(value - b.arrowCardinality[i]!), 0), Math.abs(a.meanTieDistance - b.meanTieDistance), Math.abs(a.clueDispersion - b.clueDispersion), Math.abs(a.earlySourceShare - b.earlySourceShare), Math.abs(a.earlySourceDispersion - b.earlySourceDispersion), Math.abs(a.cascadeLinkShare - b.cascadeLinkShare), Math.abs(a.largestCascadeShare - b.largestCascadeShare), hist, Math.abs(a.probeChainShare - b.probeChainShare)]; return values.reduce((n, value, i) => n + value * weights[i]!, 0) / sum;
 }
-export function selectCandidate(profile: FlowProfile, candidates: readonly RatedCandidate[], context: FlowContext): RatedCandidate { if (!candidates.length) throw new Error('selectCandidate: candidates must not be empty'); return candidates.reduce((best, candidate) => scoreFlow(profile, candidate.signature, context) > scoreFlow(profile, best.signature, context) || (scoreFlow(profile, candidate.signature, context) === scoreFlow(profile, best.signature, context) && candidate.candidateIndex < best.candidateIndex) ? candidate : best); }

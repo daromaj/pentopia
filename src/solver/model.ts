@@ -100,7 +100,17 @@ export interface Model {
   readonly clueRayMask: BitBoard;
 }
 
+/**
+ * Piece types depend only on the bank, and banks are shared objects (PRESETS,
+ * or one object reused across a generator run), while `buildModel` runs once
+ * per clue-removal trial during minimization — so the canonicalKey/orientations
+ * work is memoized per bank identity.
+ */
+const pieceTypesByBank = new WeakMap<Puzzle['bank'], PieceType[]>();
+
 function groupPieceTypes(puzzle: Puzzle): PieceType[] {
+  const cached = pieceTypesByBank.get(puzzle.bank);
+  if (cached !== undefined) return cached;
   const byKey = new Map<string, { shape: Shape; count: number }>();
   for (const piece of puzzle.bank.pieces) {
     const key = canonicalKey(piece);
@@ -113,6 +123,7 @@ function groupPieceTypes(puzzle: Puzzle): PieceType[] {
   for (const [key, { shape, count }] of byKey) {
     types.push({ index: i++, key, shape, count, orientations: orientations(shape) });
   }
+  pieceTypesByBank.set(puzzle.bank, types);
   return types;
 }
 
@@ -137,6 +148,7 @@ function buildClues(puzzle: Puzzle): ClueInfo[] {
     const arrowedDirs: Dir[] = [];
     const unarrowedDirs: Dir[] = [];
     const rays = new Map<Dir, number[]>();
+    let maxRayLen = 0;
     for (const dir of DIRS) {
       if ((v & dirBit(dir)) !== 0) arrowedDirs.push(dir);
       else unarrowedDirs.push(dir);
@@ -150,12 +162,11 @@ function buildClues(puzzle: Puzzle): ClueInfo[] {
         cy += dy;
       }
       rays.set(dir, ray);
+      maxRayLen = Math.max(maxRayLen, ray.length);
     }
 
     // Static per-clue masks for the clue-candidate rule (see ClueInfo above).
     // Both are cumulative over distance, so build them incrementally.
-    let maxRayLen = 0;
-    for (const dir of DIRS) maxRayLen = Math.max(maxRayLen, rays.get(dir)!.length);
     const nearerArrowedMask: BitBoard[] = [];
     const leUnarrowedMask: BitBoard[] = [];
     // Index by t in 0..maxRayLen. nearer[t] = arrowed cells at dist 1..t-1;
@@ -213,7 +224,6 @@ export function buildModel(puzzle: Puzzle): Model {
   const placements: Placement[] = [];
   const placementsByPiece: number[][] = pieceTypes.map(() => []);
   const placementsCoveringCell: number[][] = Array.from({ length: cols * rows }, () => []);
-  const seen = new Set<string>();
 
   for (const pt of pieceTypes) {
     for (const orient of pt.orientations) {
@@ -232,11 +242,8 @@ export function buildModel(puzzle: Puzzle): Model {
           }
           // Rule 4: a placement may not cover a clue cell unless transparent.
           if (!transparent && cells.intersects(clueCellMask)) continue;
-          // Dedup identical placements (distinct orientations can never
-          // coincide, but guard so forced-placement counts stay honest).
-          const sig = `${pt.index}:${cellList.join(',')}`;
-          if (seen.has(sig)) continue;
-          seen.add(sig);
+          // No dedup needed: `orientations()` is already deduped, and a cell
+          // set uniquely determines its orientation and offset.
           const index = placements.length;
           const halo = cells.kingHalo();
           const placement: Placement = { index, piece: pt.index, cells, halo, cellList };

@@ -17,13 +17,14 @@
  */
 
 import type { Puzzle, Solution } from '../core/types';
-import { dirBit, Dir, NO_CLUE } from '../core/types';
+import { NO_CLUE } from '../core/types';
 import { solveModel } from '../solver/search';
 import { deduceModel } from '../solver/deduce';
 import { buildModel } from '../solver/model';
 import { shuffle } from './rng';
+import { timed } from './observe';
 import type { GenerationObserver } from './generate';
-import type { FlowProfile } from './flow';
+import { tieDistance, type FlowProfile } from './flow';
 
 export interface MinimizeGates {
   /** Cap on `deduce().maxTier` — a removal is kept only if the result stays at or below it. */
@@ -46,19 +47,6 @@ export interface MinimizeGates {
 const arrowCount = (mask: number): number =>
   (mask & 1) + ((mask >>> 1) & 1) + ((mask >>> 2) & 1) + ((mask >>> 3) & 1);
 
-function tieDistance(puzzle: Puzzle, answer: Solution, clue: number): number {
-  const x = clue % puzzle.cols, y = Math.floor(clue / puzzle.cols), mask = puzzle.clues[clue]!;
-  const directions: readonly [number, number, Dir][] = [[0, -1, Dir.Up], [0, 1, Dir.Down], [-1, 0, Dir.Left], [1, 0, Dir.Right]];
-  for (const [dx, dy, dir] of directions) if ((mask & dirBit(dir)) !== 0) {
-    for (let distance = 1;; distance++) {
-      const xx = x + dx * distance, yy = y + dy * distance;
-      if (xx < 0 || yy < 0 || xx >= puzzle.cols || yy >= puzzle.rows) break;
-      if (answer.shaded[yy * puzzle.cols + xx]) return distance;
-    }
-  }
-  return 0;
-}
-
 /** Order removals to make alternate local minima express the requested flow. */
 export function prioritizeClueRemovals(
   positions: number[],
@@ -77,7 +65,7 @@ export function prioritizeClueRemovals(
   positions.sort((a, b) => priority(a) - priority(b));
 }
 
-function sameSolution(a: Solution, b: Solution): boolean {
+export function sameSolution(a: Solution, b: Solution): boolean {
   const x = a.shaded;
   const y = b.shaded;
   if (x.length !== y.length) return false;
@@ -108,30 +96,24 @@ export function minimizeClues(
         throw new Error('minimizeClues: deadline exceeded before local minimality fixed point');
       }
 
-    const saved = clues[pos]!;
-    clues[pos] = NO_CLUE;
-    const candidate: Puzzle = { ...puzzle, clues };
+      const saved = clues[pos]!;
+      clues[pos] = NO_CLUE;
+      const candidate: Puzzle = { ...puzzle, clues };
 
-    // Gate (a): uniquely solvable, and that unique solution is the answer.
-    // A capped search proves nothing — "found 1 so far" when the node cap
-    // cut the search short must never count as unique, or an ambiguous
-    // puzzle slips through the gate.
-    const modelStart = performance.now();
-    const model = buildModel(candidate);
-    gates.observer?.onModelBuilt?.(performance.now() - modelStart);
-    const solveStart = performance.now();
-    const res = solveModel(model, { maxSolutions: 2, nodeCap });
-    gates.observer?.onSolve?.(performance.now() - solveStart);
-    let keep =
-      !res.capped && res.solutions.length === 1 && sameSolution(res.solutions[0]!, answer);
+      // Gate (a): uniquely solvable, and that unique solution is the answer.
+      // A capped search proves nothing — "found 1 so far" when the node cap
+      // cut the search short must never count as unique, or an ambiguous
+      // puzzle slips through the gate.
+      const model = timed(() => buildModel(candidate), (ms) => gates.observer?.onModelBuilt?.(ms));
+      const res = timed(() => solveModel(model, { maxSolutions: 2, nodeCap }), (ms) => gates.observer?.onSolve?.(ms));
+      let keep =
+        !res.capped && res.solutions.length === 1 && sameSolution(res.solutions[0]!, answer);
 
-    // Gate (b): guess-free human-solvable, within the tier cap when specified.
-    if (keep) {
-      const deduceStart = performance.now();
-      const d = deduceModel(model);
-      gates.observer?.onDeduce?.(performance.now() - deduceStart);
-      keep = d.solved && (gates.maxTier === undefined || d.maxTier <= gates.maxTier);
-    }
+      // Gate (b): guess-free human-solvable, within the tier cap when specified.
+      if (keep) {
+        const d = timed(() => deduceModel(model), (ms) => gates.observer?.onDeduce?.(ms));
+        keep = d.solved && (gates.maxTier === undefined || d.maxTier <= gates.maxTier);
+      }
 
       gates.observer?.onRemoval?.(keep);
       if (keep) removed = true;

@@ -23,10 +23,10 @@
 import type { Puzzle, Solution } from '../core/types';
 import { validate } from '../core/validator';
 import { buildModel, type Model } from './model';
-import { BitBoard } from './board';
 import {
   cloneState,
   commitPlacement,
+  freeShaded,
   initState,
   unknownCells,
   type SolveState,
@@ -60,22 +60,6 @@ interface SearchCtx {
   stopped: boolean;
 }
 
-function firstSetBit(b: BitBoard): number {
-  const w = b.w;
-  for (let k = 0; k < b.words; k++) {
-    const word = w[k]!;
-    if (word !== 0) return (k << 5) + (31 - Math.clz32((word & -word) >>> 0));
-  }
-  return -1;
-}
-
-/** First shaded cell not yet part of a committed placement, or -1. */
-function firstFreeShaded(state: SolveState): number {
-  const free = state.shaded.clone();
-  free.andNotAssign(state.committedCells);
-  return firstSetBit(free);
-}
-
 /**
  * MRV branch-cell selection for case 2. Prefer the nearest still-unknown cell
  * on the arrowed rays of the most constrained arrow clue (fewest arrowed rays
@@ -86,20 +70,23 @@ function pickBranchCell(model: Model, state: SolveState): number {
   let best = -1;
   let bestScore = Infinity;
   for (const clue of model.clues) {
-    const candidates: number[] = [];
+    let count = 0;
+    let first = -1;
     for (const dir of clue.arrowedDirs) {
       const ray = clue.rays.get(dir)!;
       for (const c of ray) {
         if (state.excluded.test(c)) continue;
         if (state.shaded.test(c)) break; // this ray already has its nearest hit
-        candidates.push(c); // nearest unknown cell on this arrowed ray
+        // Nearest unknown cell on this arrowed ray.
+        if (count === 0) first = c;
+        count++;
         break;
       }
     }
-    if (candidates.length === 0) continue;
-    if (candidates.length < bestScore) {
-      bestScore = candidates.length;
-      best = candidates[0]!;
+    if (count === 0) continue;
+    if (count < bestScore) {
+      bestScore = count;
+      best = first;
     }
   }
   if (best >= 0) return best;
@@ -110,19 +97,14 @@ function pickBranchCell(model: Model, state: SolveState): number {
   // fail quickly via separation, pruning the branch).
   const adjacent = state.shaded.kingHalo();
   adjacent.andAssign(unknown);
-  if (!adjacent.isEmpty()) return firstSetBit(adjacent);
-  return firstSetBit(unknown);
+  if (!adjacent.isEmpty()) return adjacent.firstSet();
+  return unknown.firstSet();
 }
 
 function recordSolution(ctx: SearchCtx, state: SolveState): void {
   const sig = Array.from(state.shaded.w).join(',');
   if (ctx.sigs.has(sig)) return;
-  const n = ctx.model.cols * ctx.model.rows;
-  const shaded = new Uint8Array(n);
-  state.shaded.forEach((i) => {
-    shaded[i] = 1;
-  });
-  const solution: Solution = { shaded };
+  const solution: Solution = { shaded: state.shaded.toUint8Array() };
   // Final gate: only accept boards the validator agrees are solved.
   if (!validate(ctx.model.puzzle, solution).ok) return;
   ctx.sigs.add(sig);
@@ -143,7 +125,7 @@ function dfs(ctx: SearchCtx, state: SolveState): void {
   if (res.status === 'contradiction') return;
 
   // Case 1: cover a free shaded cell.
-  const c = firstFreeShaded(state);
+  const c = freeShaded(state).firstSet();
   if (c >= 0) {
     const covers = ctx.model.placementsCoveringCell[c]!.filter((p) => state.alive[p] === 1);
     for (const p of covers) {

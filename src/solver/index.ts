@@ -8,7 +8,7 @@ export {
   cloneState,
   commitPlacement,
   unknownCells,
-  isFullyDecided,
+  freeShaded,
 } from './state';
 export type { SolveState } from './state';
 export { propagateToFixpoint } from './propagate';

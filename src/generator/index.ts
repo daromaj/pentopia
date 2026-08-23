@@ -8,5 +8,5 @@ export { minimizeClues } from './minimize';
 export type { MinimizeGates } from './minimize';
 export { generatePuzzle, generateRatedCandidate, candidateSeed, expertProbeFloor, satisfiesDifficulty, withinProbeBudget, HARD_PROBE_CAP, SEED_BUMPS, BUMP_STRIDE } from './generate';
 export type { Difficulty, GenerateOptions, GenerateStats, GenerateResult, GenerationObserver, GeneratorPhase } from './generate';
-export { signatureOf, scoreFlow, distanceFlow, selectCandidate } from './flow';
+export { signatureOf, scoreFlow, distanceFlow, tieDistance } from './flow';
 export type { FlowProfile, FlowSignature, FlowContext, RatedCandidate } from './flow';
