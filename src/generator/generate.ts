@@ -89,6 +89,15 @@ export interface GenerateOptions {
   readonly observer?: GenerationObserver;
   /** Biases only clue-removal order; candidate zero callers omit it for legacy stability. */
   readonly flowProfile?: FlowProfile;
+  /**
+   * Grade the board as if the bank were unlimited (default `false`): the
+   * maximal-clue ceiling check, every removal in the minimizer and the final
+   * difficulty gate all deduce without "that piece-type is used up". The
+   * accepted board still holds each type at most as often as the bank does and
+   * is still proven unique under the real bank; only the deduction that rates
+   * it forgets the limit. See `PropagateOptions.ignoreBank`.
+   */
+  readonly ignoreBank?: boolean;
 }
 
 export type GeneratorPhase = 'placing-shapes' | 'checking-uniqueness' | 'minimizing';
@@ -288,7 +297,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
       (ms) => opts.observer?.onSolve?.(ms),
     );
     if (maxSolve.capped || maxSolve.solutions.length !== 1 || !sameSolution(maxSolve.solutions[0]!, answer)) continue;
-    const maxDed = timed(() => deduceModel(maxModel), (ms) => opts.observer?.onDeduce?.(ms));
+    const maxDed = timed(() => deduceModel(maxModel, { ignoreBank: opts.ignoreBank }), (ms) => opts.observer?.onDeduce?.(ms));
     if (!maxDed.solved || maxDed.maxTier > gateTier) continue;
 
     // 4. Minimize to a fixed point. A deadline abandons this candidate.
@@ -297,6 +306,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     try {
       puzzle = minimizeClues(maxPuzzle, answer, rng, {
         maxTier: gateTier, nodeCap: NODE_CAP, deadline, observer: opts.observer, flowProfile: opts.flowProfile,
+        ignoreBank: opts.ignoreBank,
       });
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('minimizeClues: deadline exceeded')) continue;
@@ -311,7 +321,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
       (ms) => opts.observer?.onSolve?.(ms),
     );
     if (finalSolve.capped || finalSolve.solutions.length !== 1 || !sameSolution(finalSolve.solutions[0]!, answer)) continue;
-    const ded = timed(() => deduceModel(finalModel), (ms) => opts.observer?.onDeduce?.(ms));
+    const ded = timed(() => deduceModel(finalModel, { ignoreBank: opts.ignoreBank }), (ms) => opts.observer?.onDeduce?.(ms));
     if (!satisfiesDifficulty(difficulty, ded, cols, rows)) continue;
     if (!withinProbeBudget(difficulty, finalModel, deadline)) continue;
 

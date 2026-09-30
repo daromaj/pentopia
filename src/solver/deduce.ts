@@ -97,12 +97,22 @@ const DEDUCE_BUDGET_MS = 30_000;
  * Pure function of `puzzle`: it is deterministic, so calling it twice yields
  * identical `steps`.
  */
-export function deduce(puzzle: Puzzle): DeduceResult {
-  return deduceModel(buildModel(puzzle));
+export function deduce(puzzle: Puzzle, opts?: DeduceOptions): DeduceResult {
+  return deduceModel(buildModel(puzzle), opts);
+}
+
+export interface DeduceOptions {
+  /**
+   * Reason as if the bank were unlimited (default `false`): no deduction may
+   * lean on a piece-type being used up. See `PropagateOptions.ignoreBank`.
+   * `solved` still requires the full validator to accept the result, so a
+   * board that solves this way has the same unique answer under the real bank.
+   */
+  readonly ignoreBank?: boolean;
 }
 
 /** Deduce from a precompiled immutable puzzle model. */
-export function deduceModel(model: ReturnType<typeof buildModel>): DeduceResult {
+export function deduceModel(model: ReturnType<typeof buildModel>, opts?: DeduceOptions): DeduceResult {
   const state = initState(model);
   // The deducer runs the full engine including the expensive `cover-analysis`,
   // `clue-candidate`, and depth-2 `probe-forcing` rules (search leaves probing
@@ -113,6 +123,7 @@ export function deduceModel(model: ReturnType<typeof buildModel>): DeduceResult 
     clueCandidate: true,
     probeDepth: 2,
     deadline: performance.now() + DEDUCE_BUDGET_MS,
+    ignoreBank: opts?.ignoreBank,
   });
   const steps = result.steps;
 

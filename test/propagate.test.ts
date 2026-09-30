@@ -15,7 +15,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { buildModel } from '@solver/model';
-import { initState } from '@solver/state';
+import { commitPlacement, initState } from '@solver/state';
 import { propagateToFixpoint, type RuleId, type Step } from '@solver/propagate';
 import { decodeUrl } from '@core/codec/url';
 import { shapeFromStrings } from '@core/shape';
@@ -93,6 +93,38 @@ describe('separation placement-filter', () => {
     propagateToFixpoint(model, st);
     expect(st.alive[p45]).toBe(0); // killed purely by separation (halo ∩ shaded)
     expect(st.alive[p23]).toBe(1); // {2,3} actually covers the shaded cell → alive
+  });
+});
+
+// ── 3b. ignoreBank: a used-up piece-type no longer kills placements ─────────
+describe('ignoreBank', () => {
+  // 5x5, one monomino in the bank, already committed at (0,0). (2,3) points
+  // DOWN, which pins its tie at distance 1 and forces (2,4) shaded — a cell only
+  // a second monomino could cover.
+  const puzzle = mkPuzzle(5, 5, { [idx(2, 3, 5)]: dirBit(Dir.Down) }, mono);
+  const seeded = () => {
+    const model = buildModel(puzzle);
+    const st = initState(model);
+    commitPlacement(model, st, model.placementsCoveringCell[idx(0, 0, 5)]![0]!);
+    return { model, st };
+  };
+
+  it('by default, the used-up monomino leaves the forced shade uncoverable', () => {
+    const { model, st } = seeded();
+    expect(propagateToFixpoint(model, st).status).toBe('contradiction');
+  });
+
+  it('with ignoreBank, the forced shade is covered and nothing contradicts', () => {
+    const { model, st } = seeded();
+    const r = propagateToFixpoint(model, st, { ignoreBank: true });
+    expect(r.status).toBe('ok');
+    expect(st.shaded.test(idx(2, 4, 5))).toBe(true);
+    expect(st.committed).toHaveLength(2);
+  });
+
+  it('reaches inner probe propagation too', () => {
+    const { model, st } = seeded();
+    expect(propagateToFixpoint(model, st, { ignoreBank: true, probeDepth: 2 }).status).toBe('ok');
   });
 });
 

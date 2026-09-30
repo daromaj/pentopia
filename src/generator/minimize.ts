@@ -42,6 +42,12 @@ export interface MinimizeGates {
   readonly observer?: GenerationObserver;
   /** Optional deterministic first-pass bias; correctness gates stay identical. */
   readonly flowProfile?: FlowProfile;
+  /**
+   * Grade gate (b) as if the bank were unlimited (default `false`); see
+   * `DeduceOptions.ignoreBank`. Gate (a) always proves uniqueness under the
+   * real bank.
+   */
+  readonly ignoreBank?: boolean;
 }
 
 const arrowCount = (mask: number): number =>
@@ -111,7 +117,7 @@ export function minimizeClues(
 
       // Gate (b): guess-free human-solvable, within the tier cap when specified.
       if (keep) {
-        const d = timed(() => deduceModel(model), (ms) => gates.observer?.onDeduce?.(ms));
+        const d = timed(() => deduceModel(model, { ignoreBank: gates.ignoreBank }), (ms) => gates.observer?.onDeduce?.(ms));
         keep = d.solved && (gates.maxTier === undefined || d.maxTier <= gates.maxTier);
       }
 

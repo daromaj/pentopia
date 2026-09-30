@@ -18,4 +18,4 @@ export type { SolveResult, SolveOptions } from './search';
 export { deduce, deduceModel, explainSteps, TIER } from './deduce';
 export { probeWalk } from './walk';
 export type { ProbeWalkResult, ProbeWalkOptions } from './walk';
-export type { DeduceResult } from './deduce';
+export type { DeduceResult, DeduceOptions } from './deduce';

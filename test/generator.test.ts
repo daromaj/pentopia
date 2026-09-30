@@ -178,6 +178,37 @@ describe('generator: local minimality corpus', () => {
   });
 });
 
+describe('generator: ignoreBank grading', () => {
+  it('grades and minimizes without bank limits, while the board stays unique under the real bank', () => {
+    for (const seed of [1, 2, 3]) {
+      const { puzzle, answer, stats } = generatePuzzle({ cols: 8, rows: 8, seed, difficulty: 'easy', ignoreBank: true });
+      assertAcceptanceCriteria(puzzle, answer, 4);
+      const relaxed = deduce(puzzle, { ignoreBank: true });
+      expect(relaxed.solved).toBe(true);
+      expect(relaxed.maxTier).toBeLessThanOrEqual(4);
+      expect(stats.maxTier).toBe(relaxed.maxTier);
+      // Locally minimal under the relaxed gate: every clue is load-bearing.
+      for (let cell = 0; cell < puzzle.clues.length; cell++) {
+        if (puzzle.clues[cell] === NO_CLUE) continue;
+        const clues = puzzle.clues.slice();
+        clues[cell] = NO_CLUE;
+        const probe: Puzzle = { ...puzzle, clues };
+        const unique = solve(probe, { maxSolutions: 2 });
+        const d = deduce(probe, { ignoreBank: true });
+        const survives = !unique.capped && unique.solutions.length === 1 && sameSolution(unique.solutions[0]!, answer) &&
+          d.solved && d.maxTier <= 4;
+        expect(survives).toBe(false);
+      }
+    }
+  });
+
+  it('leaves the default path untouched', () => {
+    const plain = generatePuzzle({ cols: 6, rows: 6, seed: 11, difficulty: 'medium' });
+    const off = generatePuzzle({ cols: 6, rows: 6, seed: 11, difficulty: 'medium', ignoreBank: false });
+    expect(off.url).toBe(plain.url);
+  });
+});
+
 describe('generator: shared difficulty predicate', () => {
   it('applies ceiling and floor together', () => {
     const easy = generatePuzzle({ cols: 6, rows: 6, seed: 1, difficulty: 'easy' });

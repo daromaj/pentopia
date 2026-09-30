@@ -14,7 +14,8 @@
  *    single value each arrowed ray's cell at that distance is forced shaded.
  *  - no-touch-halo         (§5.1): a committed placement's halo is excluded.
  *  - placement-filtering   (§5.5 etc.): kill placements that hit excluded,
- *    overlap a committed placement, or whose piece-type is exhausted.
+ *    overlap a committed placement, or whose piece-type is exhausted (the
+ *    last reason is skipped under `ignoreBank`).
  *  - forced-placement      (positive engine): a free shaded cell coverable by
  *    exactly one alive placement commits it.
  *  - cover-analysis        (§5, cross-placement): reasoning over the set of
@@ -177,6 +178,18 @@ export interface PropagateOptions {
    * spurious contradiction).
    */
   readonly deadline?: number;
+  /**
+   * Treat the bank as unlimited (default `false`). `placement-filtering` then
+   * never kills a placement because its piece-type is used up, so no deduction
+   * leans on "that type is already placed and the bank holds only so many".
+   * Committing a placement still decrements `remaining` — nothing reads it
+   * while this is on. Weaker than the default, and still sound: every cell it
+   * decides holds in every completion that respects the bank, because those
+   * are a subset of the completions it reasons over. For grading and hints
+   * only; the complete solver (search.ts) never sets it, so uniqueness is
+   * still proven under the real bank.
+   */
+  readonly ignoreBank?: boolean;
 }
 
 /** Mutable bookkeeping threaded through one propagation run. */
@@ -189,6 +202,7 @@ interface Ctx {
   /** Resolved options, carried so probe recursion reuses them verbatim. */
   readonly coverAnalysis: boolean;
   readonly clueCandidate: boolean;
+  readonly ignoreBank: boolean;
   /** Wall-clock deadline for the expensive probe loops (Infinity = none). */
   readonly deadline: number;
   /** Set once the deadline tripped, so the outer loop stops escalating. */
@@ -374,7 +388,7 @@ function rulePlacementFiltering(ctx: Ctx): void {
   for (let p = 0; p < placements.length; p++) {
     if (state.alive[p] === 0) continue;
     const placement = placements[p]!;
-    const exhausted = state.remaining[placement.piece]! <= 0;
+    const exhausted = !ctx.ignoreBank && state.remaining[placement.piece]! <= 0;
     const dead =
       exhausted ||
       placement.cells.intersects(state.excluded) ||
@@ -766,6 +780,7 @@ function ruleProbe(ctx: Ctx, depth: 1 | 2): void {
     clueCandidate: ctx.clueCandidate,
     probeDepth: (depth - 1) as 0 | 1,
     deadline: ctx.deadline,
+    ignoreBank: ctx.ignoreBank,
   };
 
   // Assume one value for cell `u` and re-propagate on a clone. On a
@@ -873,6 +888,7 @@ export function propagateToFixpoint(
   const clueCandidate = opts?.clueCandidate ?? true;
   const probeDepth = opts?.probeDepth ?? 0;
   const deadline = opts?.deadline ?? Infinity;
+  const ignoreBank = opts?.ignoreBank ?? false;
   const ctx: Ctx = {
     model,
     state,
@@ -881,6 +897,7 @@ export function propagateToFixpoint(
     contradiction: null,
     coverAnalysis,
     clueCandidate,
+    ignoreBank,
     deadline,
     timedOut: false,
   };
