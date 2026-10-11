@@ -98,6 +98,22 @@ export interface GenerateOptions {
    * it forgets the limit. See `PropagateOptions.ignoreBank`.
    */
   readonly ignoreBank?: boolean;
+  /**
+   * Bias the minimizer toward boards whose first what-if comes early
+   * (default: no bias, so every existing caller deals the boards it always
+   * dealt). `'narrow'` tries removing the clues that decide the most cells on an
+   * empty board first, so the clues that survive give little away up front and
+   * the probe-free rules run dry sooner. Selection only — every gate, tier and
+   * rating is unchanged; it picks a different local minimum, nothing more.
+   *
+   * Measured on flip's extra-hard rungs (`flip/experiments/opening-pool.ts`, 40
+   * seeds at 10x10, 60 at 8x8, same seeds both ways): at 10x10 the share of the
+   * board the probe-free rules decide before the first what-if (median
+   * `probeWalk().firstProbeAt`) fell 0.84 -> 0.76, and the hint panel's first
+   * forced what-if moved from 0.87 to 0.64 of the walk (p25 0.70 -> 0.46), at
+   * about +14% mean generation time. At 8x8 it barely moves (0.86 -> 0.80).
+   */
+  readonly opening?: 'narrow';
 }
 
 export type GeneratorPhase = 'placing-shapes' | 'checking-uniqueness' | 'minimizing';
@@ -306,7 +322,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     try {
       puzzle = minimizeClues(maxPuzzle, answer, rng, {
         maxTier: gateTier, nodeCap: NODE_CAP, deadline, observer: opts.observer, flowProfile: opts.flowProfile,
-        ignoreBank: opts.ignoreBank,
+        ignoreBank: opts.ignoreBank, opening: opts.opening,
       });
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('minimizeClues: deadline exceeded')) continue;

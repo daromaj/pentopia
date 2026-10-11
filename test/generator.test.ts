@@ -258,6 +258,34 @@ describe('generator: paired model gates', () => {
   });
 });
 
+describe('generator: narrow opening', () => {
+  it('still deals a hard board inside every gate', () => {
+    for (const seed of [1, 2]) {
+      const { puzzle } = generatePuzzle({ cols: 8, rows: 8, seed, difficulty: 'hard', opening: 'narrow' });
+      const model = buildModel(puzzle);
+      expect(satisfiesDifficulty('hard', deduce(puzzle), 8, 8), `seed ${seed}`).toBe(true);
+      expect(withinProbeBudget('hard', model), `seed ${seed}`).toBe(true);
+      expect(solve(puzzle, { maxSolutions: 2 }).solutions.length, `seed ${seed}`).toBe(1);
+    }
+  });
+
+  it('changes nothing for a caller that does not ask for it', () => {
+    const plain = generatePuzzle({ cols: 6, rows: 6, seed: 5, difficulty: 'hard' });
+    const off = generatePuzzle({ cols: 6, rows: 6, seed: 5, difficulty: 'hard', opening: undefined });
+    expect(off.url).toBe(plain.url);
+  });
+
+  it('reports where the first what-if falls', () => {
+    const { puzzle } = generatePuzzle({ cols: 8, rows: 8, seed: 1, difficulty: 'hard' });
+    const walk = probeWalk(buildModel(puzzle));
+    expect(walk.firstProbeAt).not.toBeNull();
+    expect(walk.firstProbeAt!).toBeGreaterThanOrEqual(0);
+    expect(walk.firstProbeAt!).toBeLessThan(1);
+    const easy = generatePuzzle({ cols: 6, rows: 6, seed: 1, difficulty: 'easy' });
+    expect(probeWalk(buildModel(easy.puzzle)).firstProbeAt).toBeNull();
+  });
+});
+
 describe('generator: logged samples (eyeball / open on puzz.link)', () => {
   it('logs a 6x6 and an 8x8 sample', () => {
     for (const [cols, rows, seed] of [

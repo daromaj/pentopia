@@ -26,6 +26,14 @@ export interface ProbeWalkResult {
   readonly worst: number;
   /** True when the walk gave up early: over `cap`, out of time, or wedged. */
   readonly abandoned: boolean;
+  /**
+   * Share of the board's open cells (every cell that is not a clue) the
+   * probe-free rules had decided when the walk first had to probe, or `null`
+   * when it never probed. This is where the board's first what-if sits: over
+   * flip's 10x10 extra-hard corpus it tracks the hint panel's first forced
+   * what-if (as a share of the walk) at r = 0.99, on the boards that have one.
+   */
+  readonly firstProbeAt: number | null;
 }
 
 export interface ProbeWalkOptions {
@@ -45,9 +53,12 @@ export function probeWalk(model: Model, opts: ProbeWalkOptions = {}): ProbeWalkR
   const state = initState(model);
   let probes = 0;
   let worst = 0;
+  let firstProbeAt: number | null = null;
+  const clueCells = model.puzzle.transparent ? 0 : model.clueCellMask.popcount();
+  const open = model.cols * model.rows - clueCells;
 
   for (;;) {
-    if (performance.now() > deadline) return { probes, worst, abandoned: true };
+    if (performance.now() > deadline) return { probes, worst, abandoned: true, firstProbeAt };
 
     const plain = propagateToFixpoint(model, state, {
       coverAnalysis: true,
@@ -55,8 +66,9 @@ export function probeWalk(model: Model, opts: ProbeWalkOptions = {}): ProbeWalkR
       probeDepth: 0,
       deadline,
     });
-    if (plain.status === 'contradiction') return { probes, worst, abandoned: true };
-    if (unknownCells(model, state).popcount() === 0) return { probes, worst, abandoned: false };
+    if (plain.status === 'contradiction') return { probes, worst, abandoned: true, firstProbeAt };
+    const unknown = unknownCells(model, state).popcount();
+    if (unknown === 0) return { probes, worst, abandoned: false, firstProbeAt };
 
     // The cheap rules are spent. Probe on a copy so only the one decision the
     // walk chooses lands on `state` — the rest of that sweep's forces are cells
@@ -73,12 +85,13 @@ export function probeWalk(model: Model, opts: ProbeWalkOptions = {}): ProbeWalkR
     // No probe fires either: the board is not deducible at depth 1 at all. That
     // is a ceiling failure, not a chain-length one, and the caller's own
     // `solved` gate already rejects it — so report what we have and stop.
-    if (!step) return { probes, worst, abandoned: performance.now() > deadline };
+    if (!step) return { probes, worst, abandoned: performance.now() > deadline, firstProbeAt };
 
     probes++;
+    if (probes === 1) firstProbeAt = open === 0 ? 0 : (open - unknown) / open;
     const chain = step.probeChain ?? 0;
     if (chain > worst) worst = chain;
-    if (worst > cap) return { probes, worst, abandoned: true };
+    if (worst > cap) return { probes, worst, abandoned: true, firstProbeAt };
 
     const cell = step.cells[0]!;
     if (step.kind === 'shade') state.shaded.set(cell);

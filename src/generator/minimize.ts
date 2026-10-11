@@ -43,6 +43,14 @@ export interface MinimizeGates {
   /** Optional deterministic first-pass bias; correctness gates stay identical. */
   readonly flowProfile?: FlowProfile;
   /**
+   * `'narrow'`: try removing first the clues that give the most away on an
+   * empty board — the ones with the most in-board neighbours on arrow-less
+   * sides, each of which is empty the moment the clue is read. See
+   * `GenerateOptions.opening`. Overrides `flowProfile`'s order, which is left
+   * to break ties. Correctness gates stay identical.
+   */
+  readonly opening?: 'narrow';
+  /**
    * Grade gate (b) as if the bank were unlimited (default `false`); see
    * `DeduceOptions.ignoreBank`. Gate (a) always proves uniqueness under the
    * real bank.
@@ -92,6 +100,18 @@ export function minimizeClues(
   for (let i = 0; i < clues.length; i++) if (clues[i] !== NO_CLUE) positions.push(i);
   shuffle(positions, rng);
   prioritizeClueRemovals(positions, puzzle, answer, gates.flowProfile);
+  if (gates.opening === 'narrow') {
+    const giveaway = (cell: number): number => {
+      const x = cell % puzzle.cols, y = Math.floor(cell / puzzle.cols), mask = puzzle.clues[cell]!;
+      let n = 0;
+      if (!(mask & 1) && y > 0) n++;
+      if (!(mask & 2) && y < puzzle.rows - 1) n++;
+      if (!(mask & 4) && x > 0) n++;
+      if (!(mask & 8) && x < puzzle.cols - 1) n++;
+      return n;
+    };
+    positions.sort((a, b) => giveaway(b) - giveaway(a)); // stable: the profile order breaks ties
+  }
 
   let removed: boolean;
   do {
