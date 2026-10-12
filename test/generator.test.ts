@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { generatePuzzle, expertProbeFloor, satisfiesDifficulty, withinProbeBudget, HARD_PROBE_CAP } from '@generator/generate';
+import { generatePuzzle, expertProbeFloor, satisfiesDifficulty, withinProbeBudget, probeBudgetFailure, HARD_PROBE_CAP, type RejectReason } from '@generator/generate';
 import { probeWalk } from '@solver/walk';
 import { buildModel } from '@solver/model';
 import { deriveMaximalClues } from '@generator/clues';
@@ -255,6 +255,34 @@ describe('generator: paired model gates', () => {
     } });
     expect(builds).toBe(solves);
     expect(deductions).toBeLessThanOrEqual(builds);
+  });
+});
+
+const REJECT_REASONS: RejectReason[] = [
+  'wedged', 'max-not-unique', 'max-over-ceiling', 'deadline',
+  'floor-no-probe', 'floor-chain-too-long', 'floor-walk-no-probe', 'final-verification',
+];
+
+describe('generator: reject reasons', () => {
+  it('reports one reason per discarded attempt without changing the board', () => {
+    // Seed 1 discards at least one attempt before accepting (a wedged layout at
+    // the time of writing), so the hook has something to report.
+    const reasons: RejectReason[] = [];
+    const watched = generatePuzzle({ cols: 8, rows: 8, seed: 1, difficulty: 'hard', observer: { onReject: (r) => reasons.push(r) } });
+    const bare = generatePuzzle({ cols: 8, rows: 8, seed: 1, difficulty: 'hard' });
+    expect(watched.url).toBe(bare.url);
+    expect(Array.from(watched.puzzle.clues)).toEqual(Array.from(bare.puzzle.clues));
+    expect(watched.stats.attempts).toBe(bare.stats.attempts);
+    expect(reasons.length).toBe(watched.stats.attempts - 1);
+    expect(reasons.length).toBeGreaterThan(0);
+    for (const r of reasons) expect(REJECT_REASONS).toContain(r);
+  });
+
+  it('names the failing half of the probe bound without changing the verdict', () => {
+    const { puzzle } = generatePuzzle({ cols: 8, rows: 8, seed: 11, difficulty: 'expert' });
+    const model = buildModel(puzzle);
+    expect(probeBudgetFailure('easy', model)).toBeNull();
+    expect(withinProbeBudget('hard', model)).toBe(probeBudgetFailure('hard', model) === null);
   });
 });
 

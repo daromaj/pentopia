@@ -51,7 +51,7 @@ import { encodeUrl, decodeUrl } from '../core/codec/url';
 import { solveModel } from '../solver/search';
 import { deduceModel, type DeduceResult } from '../solver/deduce';
 import { buildModel, type Model } from '../solver/model';
-import { probeWalk } from '../solver/walk';
+import { probeWalk, type ProbeWalkResult } from '../solver/walk';
 import type { RuleId } from '../solver/propagate';
 import { createRng } from './rng';
 import { placeShapes } from './place';
@@ -114,12 +114,56 @@ export interface GenerateOptions {
    * about +14% mean generation time. At 8x8 it barely moves (0.86 -> 0.80).
    */
   readonly opening?: 'narrow';
+  /**
+   * Check `hard`'s probe-chain bound inside the minimizer as well as on the
+   * finished board (default `false`, so existing callers deal the boards they
+   * always dealt). With it on, `hard` minimizes with `HARD_PROBE_CAP` as an
+   * in-loop gate (`MinimizeGates.probeCap`): a removal that would let a what-if
+   * run past the cap is restored on the spot, so minimization stops at a board
+   * inside the bound instead of walking past it and losing the whole attempt
+   * at the final check. Other difficulties have no bound, so this does nothing
+   * for them.
+   *
+   * Measured 2026-10-12 with flip's extra-hard requests and the narrow opening
+   * (`flip/experiments/generator-search-report.md`): the "chain too long"
+   * rejection disappears (10x10: 10.5 -> 0 a board, attempts 22 -> 6 at the
+   * median) and 10x10 generation falls from a median 4.1s to about 0.7s on a
+   * desktop (`flip/experiments/generator-timing.ts`; that arm also ran two
+   * minimizer options removed since, worth a few percent). The boards differ:
+   * a single one has its first what-if later, but an early one costs 4-6x
+   * less generation time.
+   */
+  readonly probeCapInLoop?: boolean;
 }
 
 export type GeneratorPhase = 'placing-shapes' | 'checking-uniqueness' | 'minimizing';
 
+/**
+ * Why an attempt was thrown away. Diagnostics only: `onReject` fires once per
+ * discarded attempt, right before the generator moves on to the next one.
+ *
+ *   wedged                placeShapes found no layout
+ *   max-not-unique        the maximal clue set is capped, ambiguous or solves to another answer
+ *   max-over-ceiling      the maximal clue set is not deduce-solvable within the tier cap
+ *   deadline              the time budget ran out (in minimization, in the probe walk, or at the end)
+ *   floor-no-probe        the minimized board fails `satisfiesDifficulty` (no probe-forcing step in the greedy log)
+ *   floor-chain-too-long  the probe walk was abandoned or a what-if ran past HARD_PROBE_CAP
+ *   floor-walk-no-probe   the interleaved walk never needed a what-if
+ *   final-verification    validate / unique-solve / codec round-trip failed on the minimized board
+ */
+export type RejectReason =
+  | 'wedged'
+  | 'max-not-unique'
+  | 'max-over-ceiling'
+  | 'deadline'
+  | 'floor-no-probe'
+  | 'floor-chain-too-long'
+  | 'floor-walk-no-probe'
+  | 'final-verification';
+
 export interface GenerationObserver {
   onPhase?(phase: GeneratorPhase): void;
+  onReject?(reason: RejectReason): void;
   onSolve?(elapsedMs: number, purpose?: 'gate' | 'codec'): void;
   onDeduce?(elapsedMs: number, purpose?: 'gate' | 'scoring'): void;
   onRemoval?(accepted: boolean): void;
@@ -145,6 +189,14 @@ export interface GenerateStats {
   readonly maxTier: number;
   readonly tierHistogram: Record<RuleId, number>;
   readonly elapsedMs: number;
+  /**
+   * `hard` only: `probeWalk().firstProbeAt` of the accepted board, read off the
+   * walk the probe bound already ran on it (`withinProbeBudget`), so it costs
+   * nothing. Where the board's first what-if sits, as a share of its open
+   * cells; never `null` on an accepted `hard` board, since the bound requires
+   * a probe. Absent for every other difficulty, which runs no walk.
+   */
+  readonly firstProbeAt?: number | null;
 }
 
 export interface GenerateResult {
@@ -260,18 +312,40 @@ export const HARD_PROBE_CAP = 4;
  *
  * Kept out of `satisfiesDifficulty` on purpose: that one reads a finished
  * `DeduceResult` and is cheap enough for any caller, while this re-propagates
- * the board once per probe. It belongs at the single final acceptance point,
- * never in the minimize loop.
+ * the board once per probe. It runs at the final acceptance point; inside the
+ * minimize loop only on request (`GenerateOptions.probeCapInLoop`).
  */
 export function withinProbeBudget(difficulty: Difficulty, model: Model, deadline = Infinity): boolean {
-  if (difficulty !== 'hard') return true;
+  return probeBudgetFailure(difficulty, model, deadline) === null;
+}
+
+/**
+ * `withinProbeBudget`, but saying which half of the bound failed (`null` =
+ * within budget). Exists so the observer can tell the two apart; the verdict is
+ * the same as `withinProbeBudget`'s on every input.
+ */
+export function probeBudgetFailure(
+  difficulty: Difficulty,
+  model: Model,
+  deadline = Infinity,
+): 'floor-chain-too-long' | 'floor-walk-no-probe' | null {
+  return probeBudget(difficulty, model, deadline).failure;
+}
+
+/** The probe bound's verdict and the walk it ran (`undefined` where nothing is bounded). */
+function probeBudget(
+  difficulty: Difficulty,
+  model: Model,
+  deadline: number,
+): { failure: 'floor-chain-too-long' | 'floor-walk-no-probe' | null; walk?: ProbeWalkResult } {
+  if (difficulty !== 'hard') return { failure: null };
   const walk = probeWalk(model, { cap: HARD_PROBE_CAP, deadline });
-  if (walk.abandoned || walk.worst > HARD_PROBE_CAP) return false;
+  if (walk.abandoned || walk.worst > HARD_PROBE_CAP) return { failure: 'floor-chain-too-long', walk };
   // `satisfiesDifficulty` counts probe steps off the greedy log, which fires
   // what-ifs on cells the cheap rules were about to hand over anyway. Requiring
   // the interleaved walk to spend one too is what makes "hard" mean the player
   // has to reason hypothetically, not that the solver felt like it.
-  return walk.probes > 0;
+  return { failure: walk.probes > 0 ? null : 'floor-walk-no-probe', walk };
 }
 
 function clueCount(clues: Int16Array): number {
@@ -290,6 +364,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
   const t0 = performance.now();
   const timeBudgetMs = opts.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS[difficulty];
   const deadline = t0 + timeBudgetMs; // may be Infinity — fine, always > now()
+  const reject = (reason: RejectReason): void => opts.observer?.onReject?.(reason);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (performance.now() > deadline) break; // a timed-out attempt is never accepted
@@ -297,7 +372,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
     // 1. Random separated layout → answer.
     opts.observer?.onPhase?.('placing-shapes');
     const answer = placeShapes(cols, rows, bank, rng, { pieceCount: opts.pieceCount });
-    if (answer === null) continue; // wedged; retry with fresh randomness
+    if (answer === null) { reject('wedged'); continue; } // retry with fresh randomness
 
     // 2. Maximal legal clue set.
     const maxClues = deriveMaximalClues(cols, rows, answer.shaded);
@@ -312,9 +387,9 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
       () => solveModel(maxModel, { maxSolutions: 2, nodeCap: NODE_CAP }),
       (ms) => opts.observer?.onSolve?.(ms),
     );
-    if (maxSolve.capped || maxSolve.solutions.length !== 1 || !sameSolution(maxSolve.solutions[0]!, answer)) continue;
+    if (maxSolve.capped || maxSolve.solutions.length !== 1 || !sameSolution(maxSolve.solutions[0]!, answer)) { reject('max-not-unique'); continue; }
     const maxDed = timed(() => deduceModel(maxModel, { ignoreBank: opts.ignoreBank }), (ms) => opts.observer?.onDeduce?.(ms));
-    if (!maxDed.solved || maxDed.maxTier > gateTier) continue;
+    if (!maxDed.solved || maxDed.maxTier > gateTier) { reject('max-over-ceiling'); continue; }
 
     // 4. Minimize to a fixed point. A deadline abandons this candidate.
     opts.observer?.onPhase?.('minimizing');
@@ -323,23 +398,29 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
       puzzle = minimizeClues(maxPuzzle, answer, rng, {
         maxTier: gateTier, nodeCap: NODE_CAP, deadline, observer: opts.observer, flowProfile: opts.flowProfile,
         ignoreBank: opts.ignoreBank, opening: opts.opening,
+        probeCap: opts.probeCapInLoop && difficulty === 'hard' ? HARD_PROBE_CAP : undefined,
       });
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith('minimizeClues: deadline exceeded')) continue;
+      if (error instanceof Error && error.message.startsWith('minimizeClues: deadline exceeded')) { reject('deadline'); continue; }
       throw error;
     }
 
     // 5/6. Solve first, then deduce, from one immutable compiled model.
-    if (!validate(puzzle, answer).ok) continue;
+    if (!validate(puzzle, answer).ok) { reject('final-verification'); continue; }
     const finalModel = timed(() => buildModel(puzzle), (ms) => opts.observer?.onModelBuilt?.(ms));
     const finalSolve = timed(
       () => solveModel(finalModel, { maxSolutions: 2, nodeCap: NODE_CAP }),
       (ms) => opts.observer?.onSolve?.(ms),
     );
-    if (finalSolve.capped || finalSolve.solutions.length !== 1 || !sameSolution(finalSolve.solutions[0]!, answer)) continue;
+    if (finalSolve.capped || finalSolve.solutions.length !== 1 || !sameSolution(finalSolve.solutions[0]!, answer)) { reject('final-verification'); continue; }
     const ded = timed(() => deduceModel(finalModel, { ignoreBank: opts.ignoreBank }), (ms) => opts.observer?.onDeduce?.(ms));
-    if (!satisfiesDifficulty(difficulty, ded, cols, rows)) continue;
-    if (!withinProbeBudget(difficulty, finalModel, deadline)) continue;
+    if (!satisfiesDifficulty(difficulty, ded, cols, rows)) { reject('floor-no-probe'); continue; }
+    const budget = probeBudget(difficulty, finalModel, deadline);
+    if (budget.failure !== null) {
+      // A walk cut short by the clock says nothing about the board.
+      reject(performance.now() > deadline ? 'deadline' : budget.failure);
+      continue;
+    }
 
     const url = encodeUrl(puzzle);
     const reDecoded = decodeUrl(url);
@@ -348,8 +429,8 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
       () => solveModel(codecModel, { maxSolutions: 2, nodeCap: NODE_CAP }),
       (ms) => opts.observer?.onSolve?.(ms, 'codec'),
     );
-    if (reSolve.capped || reSolve.solutions.length !== 1 || !sameSolution(reSolve.solutions[0]!, answer)) continue;
-    if (performance.now() > deadline) continue;
+    if (reSolve.capped || reSolve.solutions.length !== 1 || !sameSolution(reSolve.solutions[0]!, answer)) { reject('final-verification'); continue; }
+    if (performance.now() > deadline) { reject('deadline'); continue; }
 
     return {
       puzzle,
@@ -361,6 +442,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
         maxTier: ded.maxTier,
         tierHistogram: ded.tierHistogram,
         elapsedMs: performance.now() - t0,
+        ...(budget.walk ? { firstProbeAt: budget.walk.firstProbeAt } : {}),
       },
     };
   }

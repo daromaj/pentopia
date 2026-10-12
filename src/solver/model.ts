@@ -212,14 +212,149 @@ function buildClues(puzzle: Puzzle): ClueInfo[] {
   return infos;
 }
 
-export function buildModel(puzzle: Puzzle): Model {
-  const { cols, rows, transparent } = puzzle;
-  const pieceTypes = groupPieceTypes(puzzle);
+/** The clue-derived parts of a model, shared by the cached and reference builders. */
+function buildClueParts(puzzle: Puzzle): { clueCellMask: BitBoard; clues: ClueInfo[]; clueRayMask: BitBoard } {
   const clueCellMask = buildClueCellMask(puzzle);
   const clues = buildClues(puzzle);
-
-  const clueRayMask = new BitBoard(cols, rows);
+  const clueRayMask = new BitBoard(puzzle.cols, puzzle.rows);
   for (const clue of clues) for (const ray of clue.rays.values()) for (const c of ray) clueRayMask.set(c);
+  return { clueCellMask, clues, clueRayMask };
+}
+
+/**
+ * One candidate placement before the clue filter: everything a `Placement`
+ * holds except its `index`, which depends on how many earlier candidates the
+ * clues filtered out.
+ */
+interface PlacementShape {
+  readonly piece: number;
+  readonly cells: BitBoard;
+  readonly halo: BitBoard;
+  readonly cellList: readonly number[];
+}
+
+/**
+ * Placement geometry depends only on the board size and the bank's piece
+ * types, yet the minimizer rebuilds the model once per clue-removal check, and
+ * the BitBoard allocation plus `kingHalo` were ~80% of `buildModel`'s
+ * time (flip/experiments/model-cache-bench.ts --profile, 2026-10-12). So the
+ * unfiltered candidates are built once per (size, piece types) and every
+ * model shares their `cells`, `halo` and `cellList`. Sharing is sound because
+ * nothing mutates them: the solver only reads them or ORs them into its own
+ * state boards, and `cellList` is frozen to make a slip loud.
+ *
+ * Keyed by content rather than bank identity, so a bank decoded afresh from a
+ * URL still hits; insertion-ordered Map as a small LRU, because a 10x10
+ * pentomino geometry holds 4,096 candidates (about 2 MB) and a generator run
+ * only ever needs the current size.
+ */
+const GEOMETRY_CACHE_CAP = 8;
+const geometryCache = new Map<string, readonly PlacementShape[]>();
+const pieceTypesKey = new WeakMap<readonly PieceType[], string>();
+let geometryCacheEnabled = true;
+
+/**
+ * Test and benchmark switch: `false` makes `buildModel` take the reference
+ * path (`buildModelUncached`) and empties the cache. Production never calls it.
+ */
+export function setGeometryCache(enabled: boolean): void {
+  geometryCacheEnabled = enabled;
+  if (!enabled) geometryCache.clear();
+}
+
+function keyOfPieceTypes(pieceTypes: readonly PieceType[]): string {
+  let key = pieceTypesKey.get(pieceTypes);
+  if (key !== undefined) return key;
+  // Orientation order decides placement order, so the key spells out every
+  // orientation as stored, not just the canonical piece key.
+  key = pieceTypes
+    .map((pt) => pt.orientations.map((o) => `${o.w}.${o.h}.${o.bits.join('')}`).join(','))
+    .join('|');
+  pieceTypesKey.set(pieceTypes, key);
+  return key;
+}
+
+function enumerateShapes(cols: number, rows: number, pieceTypes: readonly PieceType[]): PlacementShape[] {
+  const shapes: PlacementShape[] = [];
+  for (const pt of pieceTypes) {
+    for (const orient of pt.orientations) {
+      const { w, h, bits } = orient;
+      for (let oy = 0; oy + h <= rows; oy++) {
+        for (let ox = 0; ox + w <= cols; ox++) {
+          const cells = new BitBoard(cols, rows);
+          const cellList: number[] = [];
+          for (let sy = 0; sy < h; sy++) {
+            for (let sx = 0; sx < w; sx++) {
+              if (!bits[sy * w + sx]) continue;
+              const ci = idx(ox + sx, oy + sy, cols);
+              cells.set(ci);
+              cellList.push(ci);
+            }
+          }
+          shapes.push({ piece: pt.index, cells, halo: cells.kingHalo(), cellList: Object.freeze(cellList) });
+        }
+      }
+    }
+  }
+  return shapes;
+}
+
+function placementShapes(cols: number, rows: number, pieceTypes: readonly PieceType[]): readonly PlacementShape[] {
+  const key = `${cols}x${rows}/${keyOfPieceTypes(pieceTypes)}`;
+  let shapes = geometryCache.get(key);
+  if (shapes !== undefined) {
+    geometryCache.delete(key); // refresh its LRU position
+  } else {
+    shapes = enumerateShapes(cols, rows, pieceTypes);
+    if (geometryCache.size >= GEOMETRY_CACHE_CAP) geometryCache.delete(geometryCache.keys().next().value!);
+  }
+  geometryCache.set(key, shapes);
+  return shapes;
+}
+
+export function buildModel(puzzle: Puzzle): Model {
+  if (!geometryCacheEnabled) return buildModelUncached(puzzle);
+  const { cols, rows, transparent } = puzzle;
+  const pieceTypes = groupPieceTypes(puzzle);
+  const { clueCellMask, clues, clueRayMask } = buildClueParts(puzzle);
+
+  const placements: Placement[] = [];
+  const placementsByPiece: number[][] = pieceTypes.map(() => []);
+  const placementsCoveringCell: number[][] = Array.from({ length: cols * rows }, () => []);
+
+  for (const shape of placementShapes(cols, rows, pieceTypes)) {
+    // Rule 4: a placement may not cover a clue cell unless transparent.
+    if (!transparent && shape.cells.intersects(clueCellMask)) continue;
+    const index = placements.length;
+    const { piece, cells, halo, cellList } = shape;
+    placements.push({ index, piece, cells, halo, cellList });
+    placementsByPiece[piece]!.push(index);
+    for (const ci of cellList) placementsCoveringCell[ci]!.push(index);
+  }
+
+  return {
+    puzzle,
+    cols,
+    rows,
+    pieceTypes,
+    placements,
+    placementsByPiece,
+    placementsCoveringCell,
+    clues,
+    clueCellMask,
+    clueRayMask,
+  };
+}
+
+/**
+ * The model built from scratch, with no geometry shared between calls — the
+ * builder as it was before the cache, kept as the oracle the cache is tested
+ * against (test/model-cache.test.ts) and as the benchmark's baseline.
+ */
+export function buildModelUncached(puzzle: Puzzle): Model {
+  const { cols, rows, transparent } = puzzle;
+  const pieceTypes = groupPieceTypes(puzzle);
+  const { clueCellMask, clues, clueRayMask } = buildClueParts(puzzle);
 
   const placements: Placement[] = [];
   const placementsByPiece: number[][] = pieceTypes.map(() => []);

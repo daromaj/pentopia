@@ -98,3 +98,27 @@ export function probeWalk(model: Model, opts: ProbeWalkOptions = {}): ProbeWalkR
     else state.excluded.set(cell);
   }
 }
+
+/**
+ * `probeWalk().firstProbeAt` read off a `deduce()` log instead of a walk: the
+ * open cells decided by the steps before the first `probe-forcing` step, as a
+ * share of the open cells, or `null` when no step probes. Free for a caller
+ * that already holds the log (the minimizer's gate deduction does).
+ *
+ * Exact, not approximate, wherever the log comes from a `deduce()` that reached
+ * its first probe: the fixpoint only escalates to a depth-1 sweep once the
+ * cheap rules are spent, which is the state the walk first probes from. Over
+ * 120 accepted extra-hard boards (6x6 / 8x8 / 10x10) it matched the walk on
+ * every board, nulls included (generator-profile.ts, E0, 2026-10-11).
+ */
+export function approxFirstProbe(model: Model, steps: readonly Step[]): number | null {
+  const transparent = model.puzzle.transparent;
+  const open = model.cols * model.rows - (transparent ? 0 : model.clueCellMask.popcount());
+  const decided = new Set<number>();
+  for (const step of steps) {
+    if (step.rule === 'probe-forcing') return open === 0 ? 0 : decided.size / open;
+    // A clue cell is not open (unless transparent); tier-0 steps decide it up front.
+    for (const cell of step.cells) if (transparent || !model.clueCellMask.test(cell)) decided.add(cell);
+  }
+  return null;
+}

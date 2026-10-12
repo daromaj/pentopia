@@ -19,8 +19,9 @@
 import type { Puzzle, Solution } from '../core/types';
 import { NO_CLUE } from '../core/types';
 import { solveModel } from '../solver/search';
-import { deduceModel } from '../solver/deduce';
+import { deduceModel, TIER } from '../solver/deduce';
 import { buildModel } from '../solver/model';
+import { probeWalk } from '../solver/walk';
 import { shuffle } from './rng';
 import { timed } from './observe';
 import type { GenerationObserver } from './generate';
@@ -56,6 +57,25 @@ export interface MinimizeGates {
    * real bank.
    */
   readonly ignoreBank?: boolean;
+  /**
+   * In-loop probe-chain budget (default: off). After a removal passes the
+   * other gates, if the deduction used a `probe-forcing` step (`maxTier >= 6`,
+   * the only way a what-if enters a board), run `probeWalk(model, { cap })` on
+   * the model the gate just built and restore the clue unless the walk
+   * finished with every chain at most `probeCap` long. That is the check
+   * `generatePuzzle` makes on the finished board (`withinProbeBudget`), moved
+   * in front of every removal so minimization does not walk past the budget and
+   * get the whole candidate thrown away at the end. The final check stays, and
+   * still catches boards the loop never walked (a maximal clue set nothing could
+   * be removed from, or a board with no what-if at all).
+   *
+   * A walk the `deadline` cuts short is an abandoned walk and counts as a
+   * refusal like any other, but the deadline is then past, so this throws the
+   * same error the loop throws up front instead of restoring: a clue kept only
+   * because the clock ran out would end a round with the set not locally
+   * minimal, and the caller abandons the candidate either way.
+   */
+  readonly probeCap?: number;
 }
 
 const arrowCount = (mask: number): number =>
@@ -86,6 +106,8 @@ export function sameSolution(a: Solution, b: Solution): boolean {
   for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
   return true;
 }
+
+const DEADLINE_EXCEEDED = 'minimizeClues: deadline exceeded before local minimality fixed point';
 
 export function minimizeClues(
   puzzle: Puzzle,
@@ -118,9 +140,7 @@ export function minimizeClues(
     removed = false;
     for (const pos of positions) {
       if (clues[pos] === NO_CLUE) continue;
-      if (gates.deadline !== undefined && performance.now() > gates.deadline) {
-        throw new Error('minimizeClues: deadline exceeded before local minimality fixed point');
-      }
+      if (gates.deadline !== undefined && performance.now() > gates.deadline) throw new Error(DEADLINE_EXCEEDED);
 
       const saved = clues[pos]!;
       clues[pos] = NO_CLUE;
@@ -136,9 +156,22 @@ export function minimizeClues(
         !res.capped && res.solutions.length === 1 && sameSolution(res.solutions[0]!, answer);
 
       // Gate (b): guess-free human-solvable, within the tier cap when specified.
+      let maxTierUsed = 0; // of the gate's deduction; stays 0 when it never ran
       if (keep) {
         const d = timed(() => deduceModel(model, { ignoreBank: gates.ignoreBank }), (ms) => gates.observer?.onDeduce?.(ms));
+        maxTierUsed = d.maxTier;
         keep = d.solved && (gates.maxTier === undefined || d.maxTier <= gates.maxTier);
+      }
+
+      // Probe-chain budget, last because it is the dearest gate: only a deduction
+      // that used a what-if can have a chain, and `probeWalk` re-propagates once
+      // per probe. Reuses the model built above.
+      if (keep && gates.probeCap !== undefined && maxTierUsed >= TIER['probe-forcing']) {
+        const walk = probeWalk(model, { cap: gates.probeCap, deadline: gates.deadline });
+        if (walk.abandoned || walk.worst > gates.probeCap) {
+          if (gates.deadline !== undefined && performance.now() > gates.deadline) throw new Error(DEADLINE_EXCEEDED);
+          keep = false;
+        }
       }
 
       gates.observer?.onRemoval?.(keep);
