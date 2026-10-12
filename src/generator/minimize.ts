@@ -21,7 +21,7 @@ import { NO_CLUE } from '../core/types';
 import { solveModel } from '../solver/search';
 import { deduceModel, TIER } from '../solver/deduce';
 import { buildModel } from '../solver/model';
-import { probeWalk } from '../solver/walk';
+import { approxFirstProbe, probeWalk } from '../solver/walk';
 import { shuffle } from './rng';
 import { timed } from './observe';
 import type { GenerationObserver } from './generate';
@@ -76,6 +76,22 @@ export interface MinimizeGates {
    * minimal, and the caller abandons the candidate either way.
    */
   readonly probeCap?: number;
+  /**
+   * In-loop first-what-if position gate (default: off). After a removal passes
+   * the other gates, if its deduction used a `probe-forcing` step, restore the
+   * clue unless the board's first-what-if share (`approxFirstProbe` off the
+   * gate's own deduction log, which equals `probeWalk().firstProbeAt`) lies
+   * inside `[lo, hi]`. A removal that leaves the board without a what-if is
+   * never gated, so a minimization can end without one; the caller's floor
+   * rejects that board. See `GenerateOptions.firstProbeWindow`.
+   */
+  readonly firstProbeWindow?: FirstProbeWindow;
+}
+
+/** A closed interval on `probeWalk().firstProbeAt` (both ends inclusive). */
+export interface FirstProbeWindow {
+  readonly lo: number;
+  readonly hi: number;
 }
 
 const arrowCount = (mask: number): number =>
@@ -161,6 +177,12 @@ export function minimizeClues(
         const d = timed(() => deduceModel(model, { ignoreBank: gates.ignoreBank }), (ms) => gates.observer?.onDeduce?.(ms));
         maxTierUsed = d.maxTier;
         keep = d.solved && (gates.maxTier === undefined || d.maxTier <= gates.maxTier);
+        // Free off the deduction log, so it runs before the probe walk and
+        // spares the walk on every removal it refuses.
+        if (keep && gates.firstProbeWindow && d.maxTier >= TIER['probe-forcing']) {
+          const at = approxFirstProbe(model, d.steps);
+          keep = at !== null && at >= gates.firstProbeWindow.lo && at <= gates.firstProbeWindow.hi;
+        }
       }
 
       // Probe-chain budget, last because it is the dearest gate: only a deduction

@@ -56,7 +56,7 @@ import type { RuleId } from '../solver/propagate';
 import { createRng } from './rng';
 import { placeShapes } from './place';
 import { deriveMaximalClues } from './clues';
-import { minimizeClues, sameSolution } from './minimize';
+import { minimizeClues, sameSolution, type FirstProbeWindow } from './minimize';
 import { timed } from './observe';
 import { signatureOf, type FlowProfile, type RatedCandidate } from './flow';
 
@@ -134,6 +134,36 @@ export interface GenerateOptions {
    * less generation time.
    */
   readonly probeCapInLoop?: boolean;
+  /**
+   * Where a `hard` board's first what-if may land (default: unset, and
+   * existing callers deal the boards they always dealt): the share of open
+   * cells decided before it (`probeWalk().firstProbeAt`) must lie inside
+   * `[lo, hi]`. Enforced inside the minimizer (`MinimizeGates.firstProbeWindow`):
+   * a clue removal that brings a what-if in outside the window is restored on
+   * the spot, and an attempt that never gets one in the window fails the floor
+   * like any other. Other difficulties run no walk, so this does nothing for
+   * them. There is no limit on how many what-ifs the board has afterwards.
+   *
+   * Only a gate in the loop works. The position is fixed by the one removal
+   * that first brings a what-if in: from the last probe-free board the traces
+   * (L12, 6 accepted attempts) found exactly one removal that keeps the board
+   * unique, within the tier cap and within the chain bound, and after it
+   * `firstProbeAt` hardly moves. Restarts
+   * from that point, local search over the clue set, ruin-and-recreate and
+   * minimizing probe-free removals first all failed to move it, so the rest is
+   * rejection: the gate throws away about ten times as many minimizations
+   * (`floor-no-probe` 2.2 -> 22 a board at L12).
+   *
+   * Measured 2026-10-12 with flip's extra-hard requests, window `[0.35, 0.65]`
+   * and `probeCapInLoop` (`flip/experiments/generator-search-report.md`, 40
+   * seeds a rung, `flip/experiments/whatif-position.ts`): L12 boards whose
+   * first what-if is inside the window as the hint panel sees it 26/40 against
+   * 6/40 without the gate, `firstProbeAt` inside it 40/40 against 7/40, at
+   * about 3.6x the generation time of a candidate (median 7.9s against 1.4s
+   * under load, p90 about 5x). Measured with `probeCapInLoop` on, the
+   * setting it ships with.
+   */
+  readonly firstProbeWindow?: FirstProbeWindow;
 }
 
 export type GeneratorPhase = 'placing-shapes' | 'checking-uniqueness' | 'minimizing';
@@ -399,6 +429,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
         maxTier: gateTier, nodeCap: NODE_CAP, deadline, observer: opts.observer, flowProfile: opts.flowProfile,
         ignoreBank: opts.ignoreBank, opening: opts.opening,
         probeCap: opts.probeCapInLoop && difficulty === 'hard' ? HARD_PROBE_CAP : undefined,
+        firstProbeWindow: difficulty === 'hard' ? opts.firstProbeWindow : undefined,
       });
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('minimizeClues: deadline exceeded')) { reject('deadline'); continue; }
