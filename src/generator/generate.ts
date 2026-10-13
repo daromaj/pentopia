@@ -56,7 +56,7 @@ import type { RuleId } from '../solver/propagate';
 import { createRng } from './rng';
 import { placeShapes } from './place';
 import { deriveMaximalClues } from './clues';
-import { minimizeClues, sameSolution, type FirstProbeWindow } from './minimize';
+import { minimizeClues, sameSolution, MINIMIZE_ABANDONED, type FirstProbeWindow } from './minimize';
 import { timed } from './observe';
 import { signatureOf, type FlowProfile, type RatedCandidate } from './flow';
 
@@ -164,6 +164,28 @@ export interface GenerateOptions {
    * setting it ships with.
    */
   readonly firstProbeWindow?: FirstProbeWindow;
+  /**
+   * Let the minimizer skip re-checks whose answer it already knows
+   * (`MinimizeGates.skipSettled`; default `true`, pass `false` for the plain loop). Exact: every board is the
+   * one the plain minimizer deals, only sooner. Measured 2026-10-13 on flip's
+   * extra-hard requests: see flip/experiments/generator-early-reject-report.md.
+   */
+  readonly skipSettledRemovals?: boolean;
+  /**
+   * `hard` only, default unset: abandon an attempt whose minimizer has run this
+   * many passes without keeping a removal that needs a what-if
+   * (`MinimizeGates.abandonProbeFreeAfterPass`), instead of finishing the
+   * minimization and failing the floor. Heuristic: it changes which board is
+   * dealt. Measured, not shipped (flip/experiments/generator-early-reject-report.md).
+   */
+  readonly abandonProbeFreeAfterPass?: number;
+  /**
+   * Default unset: every attempt minimizes this answer instead of placing a
+   * fresh layout, so attempts differ only in the removal order the seed's RNG
+   * shuffles. For measuring layout reuse across tournament candidates
+   * (flip/experiments/generator-early-reject-report.md); production never sets it.
+   */
+  readonly fixedLayout?: Solution;
 }
 
 export type GeneratorPhase = 'placing-shapes' | 'checking-uniqueness' | 'minimizing';
@@ -180,6 +202,7 @@ export type GeneratorPhase = 'placing-shapes' | 'checking-uniqueness' | 'minimiz
  *   floor-chain-too-long  the probe walk was abandoned or a what-if ran past HARD_PROBE_CAP
  *   floor-walk-no-probe   the interleaved walk never needed a what-if
  *   final-verification    validate / unique-solve / codec round-trip failed on the minimized board
+ *   abandoned-probe-free  `abandonProbeFreeAfterPass` cut the minimization short
  */
 export type RejectReason =
   | 'wedged'
@@ -189,7 +212,8 @@ export type RejectReason =
   | 'floor-no-probe'
   | 'floor-chain-too-long'
   | 'floor-walk-no-probe'
-  | 'final-verification';
+  | 'final-verification'
+  | 'abandoned-probe-free';
 
 export interface GenerationObserver {
   onPhase?(phase: GeneratorPhase): void;
@@ -401,7 +425,7 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
 
     // 1. Random separated layout → answer.
     opts.observer?.onPhase?.('placing-shapes');
-    const answer = placeShapes(cols, rows, bank, rng, { pieceCount: opts.pieceCount });
+    const answer = opts.fixedLayout ?? placeShapes(cols, rows, bank, rng, { pieceCount: opts.pieceCount });
     if (answer === null) { reject('wedged'); continue; } // retry with fresh randomness
 
     // 2. Maximal legal clue set.
@@ -430,9 +454,12 @@ export function generatePuzzle(opts: GenerateOptions): GenerateResult {
         ignoreBank: opts.ignoreBank, opening: opts.opening,
         probeCap: opts.probeCapInLoop && difficulty === 'hard' ? HARD_PROBE_CAP : undefined,
         firstProbeWindow: difficulty === 'hard' ? opts.firstProbeWindow : undefined,
+        skipSettled: opts.skipSettledRemovals ?? true,
+        abandonProbeFreeAfterPass: difficulty === 'hard' ? opts.abandonProbeFreeAfterPass : undefined,
       });
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('minimizeClues: deadline exceeded')) { reject('deadline'); continue; }
+      if (error instanceof Error && error.message === MINIMIZE_ABANDONED) { reject('abandoned-probe-free'); continue; }
       throw error;
     }
 

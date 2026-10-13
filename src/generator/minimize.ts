@@ -86,7 +86,38 @@ export interface MinimizeGates {
    * rejects that board. See `GenerateOptions.firstProbeWindow`.
    */
   readonly firstProbeWindow?: FirstProbeWindow;
+  /**
+   * Skip re-checks whose answer is already known (default: on; `false` runs the plain loop). Two kinds,
+   * both exact, so the result is the clue set the plain loop returns:
+   *
+   *   - a position whose removal was refused because the search found two
+   *     solutions. Fewer clues only admit more shadings (every solution of a
+   *     clue set still solves any subset of it), so that removal stays
+   *     ambiguous for the rest of the minimization. A capped search proves
+   *     nothing and is not remembered.
+   *   - a position refused (for any reason) when the same number of removals
+   *     had been kept as now: the clue set is the one it was refused on, and
+   *     every gate is a pure function of the clue set.
+   *
+   * Only later passes repeat checks, so this trims the confirmation passes:
+   * on flip's extra-hard rungs about a fifth of all check time
+   * (flip/experiments/generator-early-reject-report.md).
+   */
+  readonly skipSettled?: boolean;
+  /**
+   * Heuristic early reject (default: off). Abandon the minimization, by
+   * throwing `MINIMIZE_ABANDONED`, once this many full passes have run and no
+   * kept removal has needed a what-if (`maxTier >= 6`). For a caller whose
+   * floor demands a probe (`hard`), such a run is nearly always rejected after
+   * the remaining passes; it can still bring one in during a later pass, so
+   * this changes which board is dealt. Measured, not shipped:
+   * flip/experiments/generator-early-reject-report.md.
+   */
+  readonly abandonProbeFreeAfterPass?: number;
 }
+
+/** Message of the error `abandonProbeFreeAfterPass` throws. */
+export const MINIMIZE_ABANDONED = 'minimizeClues: abandoned without a what-if';
 
 /** A closed interval on `probeWalk().firstProbeAt` (both ends inclusive). */
 export interface FirstProbeWindow {
@@ -151,11 +182,25 @@ export function minimizeClues(
     positions.sort((a, b) => giveaway(b) - giveaway(a)); // stable: the profile order breaks ties
   }
 
+  // `skipSettled` bookkeeping: per position, the kept-removal count at its last
+  // refusal (-1 = never refused) and whether that refusal was a proven ambiguity.
+  const skipSettled = gates.skipSettled ?? true;
+  const refusedAt = skipSettled ? new Int32Array(clues.length).fill(-1) : null;
+  const ambiguous = skipSettled ? new Uint8Array(clues.length) : null;
+  let keptCount = 0;
+  let pass = 0;
+  let probeKept = false;
+
   let removed: boolean;
   do {
     removed = false;
+    if (gates.abandonProbeFreeAfterPass !== undefined && pass >= gates.abandonProbeFreeAfterPass && !probeKept) {
+      throw new Error(MINIMIZE_ABANDONED);
+    }
+    pass++;
     for (const pos of positions) {
       if (clues[pos] === NO_CLUE) continue;
+      if (refusedAt && (ambiguous![pos] === 1 || refusedAt[pos] === keptCount)) continue;
       if (gates.deadline !== undefined && performance.now() > gates.deadline) throw new Error(DEADLINE_EXCEEDED);
 
       const saved = clues[pos]!;
@@ -197,8 +242,17 @@ export function minimizeClues(
       }
 
       gates.observer?.onRemoval?.(keep);
-      if (keep) removed = true;
-      else clues[pos] = saved; // restore — this clue is load-bearing
+      if (keep) {
+        removed = true;
+        keptCount++;
+        if (maxTierUsed >= TIER['probe-forcing']) probeKept = true;
+      } else {
+        clues[pos] = saved; // restore — this clue is load-bearing
+        if (refusedAt) {
+          refusedAt[pos] = keptCount;
+          if (!res.capped && res.solutions.length >= 2) ambiguous![pos] = 1;
+        }
+      }
     }
   } while (removed);
 
