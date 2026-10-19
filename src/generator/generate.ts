@@ -321,6 +321,16 @@ export function expertProbeFloor(cols: number, rows: number): number {
   return Math.round(0.4 * cols * rows + 12);
 }
 
+/**
+ * Does this finished puzzle stay *under* the requested difficulty: solved by
+ * deduction within its tier ceiling? The floor half of `satisfiesDifficulty`
+ * is a generator quality gate and is left out, so a board dealt under older
+ * deduction rules still loads after a new cheap rule lowers its rating.
+ */
+export function withinDifficultyCeiling(difficulty: Difficulty, ded: Pick<DeduceResult, 'solved' | 'maxTier'>): boolean {
+  return ded.solved && ded.maxTier <= GATE_TIER[difficulty];
+}
+
 /** Is this finished puzzle hard *enough* for the requested difficulty? */
 export function satisfiesDifficulty(
   difficulty: Difficulty,

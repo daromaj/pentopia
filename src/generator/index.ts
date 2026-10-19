@@ -6,7 +6,7 @@ export type { PlaceOptions } from './place';
 export { deriveMaximalClues } from './clues';
 export { minimizeClues } from './minimize';
 export type { MinimizeGates, FirstProbeWindow } from './minimize';
-export { generatePuzzle, generateRatedCandidate, candidateSeed, expertProbeFloor, satisfiesDifficulty, withinProbeBudget, HARD_PROBE_CAP, SEED_BUMPS, BUMP_STRIDE } from './generate';
+export { generatePuzzle, generateRatedCandidate, candidateSeed, expertProbeFloor, satisfiesDifficulty, withinDifficultyCeiling, withinProbeBudget, HARD_PROBE_CAP, SEED_BUMPS, BUMP_STRIDE } from './generate';
 export type { Difficulty, GenerateOptions, GenerateStats, GenerateResult, GenerationObserver, GeneratorPhase } from './generate';
 export { signatureOf, scoreFlow, distanceFlow, tieDistance } from './flow';
 export type { FlowProfile, FlowSignature, FlowContext, RatedCandidate } from './flow';
