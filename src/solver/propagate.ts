@@ -26,6 +26,10 @@
  *    clue, the placements that could realise each arrowed ray's tie hit are
  *    limited; cells common to *all* of them are forced (shade the shared cells,
  *    exclude the shared halo). See its block comment. Expensive ("outer ring").
+ *  - sensor-wrap           (§5, per-clue, distance 1): a clue whose arrowed
+ *    neighbours touch diagonally needs one piece holding them all; if no alive
+ *    placement does, the tie is not 1 and every arrowed neighbour is excluded.
+ *    See its block comment.
  *  - probe-forcing / probe-forcing-2 (deducer-only failed-literal analysis):
  *    try a value for an undecided cell; if it forces a contradiction under sound
  *    propagation, force the opposite. Depth-2 lets the inner propagation itself
@@ -106,6 +110,7 @@ export type RuleId =
   | 'placement-filtering'
   | 'forced-placement'
   | 'cover-analysis'
+  | 'sensor-wrap'
   | 'clue-candidate'
   | 'probe-forcing'
   | 'probe-forcing-2';
@@ -149,7 +154,9 @@ export interface PropagateOptions {
    * Run the per-clue `clue-candidate` rule (default `true`). Like
    * `cover-analysis` it is an "outer ring" expensive rule enabled in both the
    * deducer and the complete search (it prunes at every node and its steps
-   * carry difficulty signal). See {@link ruleClueCandidate}.
+   * carry difficulty signal). See {@link ruleClueCandidate}. The same flag
+   * also gates the per-clue `sensor-wrap` rule ({@link ruleSensorWrap}), which
+   * runs just before it: both are "outer ring" per-clue placement reasoning.
    */
   readonly clueCandidate?: boolean;
   /**
@@ -727,6 +734,136 @@ function ruleClueCandidate(ctx: Ctx): void {
 }
 
 /**
+ * Sensor wrap (§5, per-clue, tie distance 1 only — TIER 5, alongside
+ * cover-analysis / clue-candidate).
+ *
+ * If a clue's tie distance is t = 1, each arrowed ray's distance-1 cell (its
+ * "hit") is shaded. Two hits on perpendicular rays touch diagonally, and
+ * different pieces never touch, not even diagonally — so diagonally touching
+ * hits belong to ONE piece. Group the hits by diagonal adjacency (transitively);
+ * every group of size ≥ 2 then lies inside a single used placement. That
+ * placement is still ALIVE: it is not committed (a committed placement's cells
+ * are shaded, and we only fire while no hit is decided), and a used placement
+ * never dies under `placement-filtering` (it hits no excluded cell, overlaps no
+ * committed placement, has no shaded cell in its halo, and — unless
+ * `ignoreBank` — its piece-type is not used up). So if some group has NO alive
+ * placement covering all of its cells, t = 1 is impossible; then t ≥ 2 and every
+ * hit is nearer than the tie, hence unshaded → exclude every hit.
+ *
+ * Fires only while no hit is decided: a shaded hit pins t = 1 (nothing to
+ * refute), an excluded hit already rules t = 1 out and `arrow-distance-bounds`
+ * excludes the rest. Only t = 1 matters: at t ≥ 2 the hits on different rays
+ * are ≥ 2 apart in some coordinate and never touch.
+ *
+ * Sound in transparent mode too: the check is "an alive placement covering the
+ * whole group", and clue-covering placements are simply part of the model there.
+ * Consequences on an opaque board: 4 arrows always fire (a ring of 4 hits needs
+ * ≥ 7 cells without the sensor); 3 arrows fire unless the U wraps the sensor; 2
+ * perpendicular arrows fire when no piece can hold both hits (typically the
+ * joining corner is blocked); 2 opposite arrows never fire (their hits don't
+ * touch). On a
+ * transparent board pieces may also run through the sensor (the X holds all four
+ * hits, a T or Y three), and the generic check accounts for that.
+ *
+ * Step detail: `clue <i>: distance 1 impossible — <reason>`, where `<reason>` is
+ * `four arrows` | `corner <c> blocked` | `no piece holds cells <a>,<b>[,<c>[,<d>]]`
+ * (cells ascending; four only on a transparent board without the X). A contract
+ * with the hint layer — keep it stable.
+ *
+ * Cost: ≤ 4 neighbours per clue; one scan of `placementsCoveringCell` per group.
+ */
+function ruleSensorWrap(ctx: Ctx): void {
+  const { model, state } = ctx;
+  const { cols } = model;
+  for (const clue of model.clues) {
+    if (clue.arrowedDirs.length < 2) continue;
+    const hits: number[] = [];
+    let usable = true;
+    for (const dir of clue.arrowedDirs) {
+      const hit = clue.rays.get(dir)![0];
+      // A ray with no cell is a dead clue (computeTie reports it); a decided hit
+      // means t = 1 is either established or already refuted.
+      if (hit === undefined || state.shaded.test(hit) || state.excluded.test(hit)) {
+        usable = false;
+        break;
+      }
+      hits.push(hit);
+    }
+    if (!usable) continue;
+
+    // Group hits by diagonal adjacency (union-find over ≤ 4 items).
+    const parent = hits.map((_, i) => i);
+    const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i]!)));
+    for (let i = 0; i < hits.length; i++) {
+      for (let j = i + 1; j < hits.length; j++) {
+        const a = hits[i]!;
+        const b = hits[j]!;
+        if (Math.abs((a % cols) - (b % cols)) === 1 && Math.abs(Math.floor(a / cols) - Math.floor(b / cols)) === 1)
+          parent[find(i)] = find(j);
+      }
+    }
+    const groups = new Map<number, number[]>();
+    hits.forEach((c, i) => {
+      const root = find(i);
+      const g = groups.get(root);
+      if (g === undefined) groups.set(root, [c]);
+      else g.push(c);
+    });
+
+    let failing: number[] | null = null;
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      const holds = model.placementsCoveringCell[group[0]!]!.some((p) => {
+        if (state.alive[p] !== 1) return false;
+        const pl = model.placements[p]!;
+        if (!ctx.ignoreBank && state.remaining[pl.piece]! <= 0) return false;
+        return group.every((c) => pl.cells.test(c));
+      });
+      if (!holds) {
+        failing = group;
+        break;
+      }
+    }
+    if (failing === null) continue;
+
+    let reason: string;
+    if (hits.length === 4 && !model.puzzle.transparent) {
+      // Opaque board: a ring of four hits needs ≥ 7 cells, so this always holds.
+      // (Transparent boards let the X cover the sensor and all four hits.)
+      reason = 'four arrows';
+    } else {
+      reason = `no piece holds cells ${[...failing].sort((a, b) => a - b).join(',')}`;
+      if (hits.length === 2 && failing.length === 2) {
+        // Any pentomino holding two diagonal cells holds one of the two cells
+        // joining them; one is the sensor. Name the other only when both are
+        // out of reach (the sensor is coverable in transparent mode unless
+        // excluded), so the reason is a complete explanation.
+        const [a, b] = hits as [number, number];
+        const corner = [Math.floor(a / cols) * cols + (b % cols), Math.floor(b / cols) * cols + (a % cols)].find(
+          (c) => c !== clue.index,
+        )!;
+        const opaque = !model.puzzle.transparent;
+        const blocked = (c: number): boolean => state.excluded.test(c) || (opaque && model.clueCellMask.test(c));
+        if (blocked(corner) && blocked(clue.index)) reason = `corner ${corner} blocked`;
+      }
+    }
+
+    const newly: number[] = [];
+    for (const c of hits) if (exclude(ctx, c)) newly.push(c);
+    if (newly.length > 0) {
+      ctx.steps.push({
+        rule: 'sensor-wrap',
+        sourceClue: clue.index,
+        kind: 'exclude',
+        cells: newly,
+        detail: `clue ${clue.index}: distance 1 impossible — ${reason}`,
+      });
+    }
+  }
+  checkShadedExcludedDisjoint(ctx);
+}
+
+/**
  * Failed-literal probing (a.k.a. "what-if" / singleton consistency). For each
  * still-undecided cell u, tentatively try each value and re-propagate (with the
  * cheap + cover rules, but NOT probing again — bounded recursion):
@@ -870,10 +1007,12 @@ function cheapFixpoint(ctx: Ctx): void {
  * Structure (cheap → expensive, each only when the cheaper ones stall):
  *  1. cheap per-cell / per-placement rules to a fixed point;
  *  2. one `cover-analysis` pass — if it changed anything, go back to (1);
- *  3. otherwise one `clue-candidate` pass — if it changed anything, back to (1);
- *  4. otherwise, if `probeDepth ≥ 1`, one depth-1 `probe-forcing` sweep — if it
+ *  3. otherwise one `sensor-wrap` pass — if it changed anything, back to (1);
+ *  4. otherwise one `clue-candidate` pass — if it changed anything, back to (1)
+ *     (3 and 4 are both gated by the `clueCandidate` option);
+ *  5. otherwise, if `probeDepth ≥ 1`, one depth-1 `probe-forcing` sweep — if it
  *     changed anything, back to (1);
- *  5. otherwise, if `probeDepth ≥ 2`, one depth-2 `probe-forcing-2` step (it
+ *  6. otherwise, if `probeDepth ≥ 2`, one depth-2 `probe-forcing-2` step (it
  *     returns after a single force) — if it changed anything, back to (1).
  * This keeps the expensive rules off the hot inner loop and out of search
  * (which runs with `probeDepth: 0`), and only escalates to the pricier tool once
@@ -922,6 +1061,16 @@ export function propagateToFixpoint(
       if (ctx.changed) {
         outerChanged = true;
         continue; // let the cheap rules digest the new cells first
+      }
+    }
+
+    if (clueCandidate) {
+      ctx.changed = false;
+      ruleSensorWrap(ctx);
+      if (ctx.contradiction !== null) break;
+      if (ctx.changed) {
+        outerChanged = true;
+        continue;
       }
     }
 

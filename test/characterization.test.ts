@@ -97,9 +97,9 @@ const GEN_GOLDENS: GenGolden[] = [
     timeout: 8000,
   },
   {
-    cols: 8, rows: 8, difficulty: 'medium', seed: 1, url: 'pentopia/8/8/2o4h4r8i6k5iai2h4o9gcj//p',
-    clueCount: 11, maxTier: 5,
-    hist: { 'clue-cell-exclusion': 1, 'no-touch-halo': 4, 'arrow-distance-bounds': 12, 'arrow-forced-shade': 5, 'forced-placement': 4, 'cover-analysis': 2, 'clue-candidate': 3 },
+    cols: 8, rows: 8, difficulty: 'medium', seed: 1, url: 'pentopia/8/8/2o4h4r8i6k5iai2r9gcj//p',
+    clueCount: 10, maxTier: 5,
+    hist: { 'clue-cell-exclusion': 1, 'no-touch-halo': 4, 'arrow-distance-bounds': 10, 'arrow-forced-shade': 6, 'forced-placement': 4, 'cover-analysis': 6, 'sensor-wrap': 1, 'clue-candidate': 1 },
     timeout: 8000,
   },
   {
@@ -159,8 +159,8 @@ const DEDUCE_GOLDENS: DeduceGolden[] = [
   {
     name: '§3.4 10x10 sample',
     url: 'pentopia/10/10/2s9ziar5gbi6z6hai9s4//p',
-    solved: true, unresolved: 0, maxTier: 6, maxProbeChain: 33, steps: 72,
-    hist: { 'clue-cell-exclusion': 1, 'no-touch-halo': 7, 'arrow-distance-bounds': 10, 'arrow-forced-shade': 4, 'forced-placement': 7, 'cover-analysis': 4, 'clue-candidate': 1, 'probe-forcing': 38 },
+    solved: true, unresolved: 0, maxTier: 6, maxProbeChain: 33, steps: 71,
+    hist: { 'clue-cell-exclusion': 1, 'no-touch-halo': 7, 'arrow-distance-bounds': 9, 'arrow-forced-shade': 4, 'forced-placement': 7, 'cover-analysis': 1, 'clue-candidate': 1, 'probe-forcing': 41 },
     timeout: 10000,
   },
   {

@@ -68,6 +68,7 @@ export const TIER: Record<RuleId, number> = {
   'arrow-forced-shade': 3,
   'forced-placement': 4,
   'cover-analysis': 5,
+  'sensor-wrap': 5,
   'clue-candidate': 5,
   'probe-forcing': 6,
   'probe-forcing-2': 7,

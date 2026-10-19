@@ -6,7 +6,7 @@ import { distanceFlow, scoreFlow, signatureOf, type FlowSignature } from '@gener
 import { prioritizeClueRemovals } from '@generator/minimize';
 import type { RuleId } from '@solver/propagate';
 
-const histogram = (): Record<RuleId, number> => ({ 'clue-cell-exclusion': 0, 'no-touch-halo': 0, 'placement-filtering': 0, 'arrow-distance-bounds': 0, 'arrow-forced-shade': 0, 'forced-placement': 0, 'cover-analysis': 0, 'clue-candidate': 0, 'probe-forcing': 0, 'probe-forcing-2': 0 });
+const histogram = (): Record<RuleId, number> => ({ 'clue-cell-exclusion': 0, 'no-touch-halo': 0, 'placement-filtering': 0, 'arrow-distance-bounds': 0, 'arrow-forced-shade': 0, 'forced-placement': 0, 'cover-analysis': 0, 'sensor-wrap': 0, 'clue-candidate': 0, 'probe-forcing': 0, 'probe-forcing-2': 0 });
 const signature = (patch: Partial<FlowSignature> = {}): FlowSignature => ({ arrowCardinality: [1, 0, 0, 0], meanTieDistance: 0, clueDispersion: 0, earlySourceShare: 0, earlySourceDispersion: 0, cascadeLinkShare: 0, largestCascadeShare: 0, ruleHistogram: histogram(), probeChainShare: 0, ...patch });
 const context = { difficulty: 'medium' as Difficulty, rung: 3 };
 
@@ -71,7 +71,7 @@ describe('flow profiles', () => {
   it('tags every clue-specific deduction with its structural source', () => {
     const board = generatePuzzle({ cols: 6, rows: 6, seed: 29, difficulty: 'medium' });
     const clueSteps = deduce(board.puzzle).steps.filter((step) =>
-      step.rule === 'arrow-distance-bounds' || step.rule === 'arrow-forced-shade' || step.rule === 'clue-candidate',
+      step.rule === 'arrow-distance-bounds' || step.rule === 'arrow-forced-shade' || step.rule === 'sensor-wrap' || step.rule === 'clue-candidate',
     );
     expect(clueSteps.length).toBeGreaterThan(0);
     expect(clueSteps.every((step) => step.sourceClue !== undefined)).toBe(true);

@@ -163,6 +163,10 @@ function buildStepMessage(step: Step, kind: 'shade' | 'exclude', primaryCell: nu
       return kind === 'shade'
         ? `Every possible piece covering a shaded cell also covers ${primary} — shade it.`
         : `No piece can reach ${primary} — mark it empty.`;
+    case 'sensor-wrap': {
+      const clueRef = refFromDetail(step.detail, /clue (\d+)/, cols) ?? primary;
+      return `If the arrows at ${clueRef} hit right next to it, the cells they point at touch diagonally and must be one piece — no piece fits them. So their shape is farther away, and ${primary} must stay empty.`;
+    }
     case 'clue-candidate': {
       const clueRef = refFromDetail(step.detail, /clue (\d+)/, cols) ?? primary;
       return kind === 'shade'

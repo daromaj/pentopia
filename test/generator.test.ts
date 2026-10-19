@@ -106,7 +106,7 @@ describe('generator: expert difficulty', () => {
   // (maxAttempts=400, timeBudgetMs=60000) — expert's floor is a deliberate
   // tail event (see generate.ts's expertProbeFloor doc comment), so most
   // seeds work but some take much longer or time out; these three don't.
-  const fastSeeds = [5, 8, 11];
+  const fastSeeds = [5, 8, 10]; // 11 times out since the sensor-wrap rule (2026-10-19)
 
   for (const seed of fastSeeds) {
     it(`8x8 expert seed ${seed} satisfies all AC + the expert floor`, () => {
@@ -239,7 +239,7 @@ describe('generator: bounded hard probing', () => {
   it('rejects a board whose what-if runs past the cap', () => {
     // Generated without the bound, so its probes are free to run long; the
     // predicate has to be what turns one into the other.
-    const { puzzle } = generatePuzzle({ cols: 8, rows: 8, seed: 11, difficulty: 'expert' });
+    const { puzzle } = generatePuzzle({ cols: 8, rows: 8, seed: 10, difficulty: 'expert' });
     const model = buildModel(puzzle);
     const walk = probeWalk(model);
     if (walk.worst <= HARD_PROBE_CAP) return; // this seed happens to be gentle; nothing to assert
@@ -279,7 +279,7 @@ describe('generator: reject reasons', () => {
   });
 
   it('names the failing half of the probe bound without changing the verdict', () => {
-    const { puzzle } = generatePuzzle({ cols: 8, rows: 8, seed: 11, difficulty: 'expert' });
+    const { puzzle } = generatePuzzle({ cols: 8, rows: 8, seed: 10, difficulty: 'expert' });
     const model = buildModel(puzzle);
     expect(probeBudgetFailure('easy', model)).toBeNull();
     expect(withinProbeBudget('hard', model)).toBe(probeBudgetFailure('hard', model) === null);

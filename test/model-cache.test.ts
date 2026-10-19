@@ -143,12 +143,13 @@ describe('buildModel geometry cache', () => {
 });
 
 describe('generatePuzzle with the geometry cache', () => {
-  // Recorded on 2026-10-12 before the cache existed (same options, same engine).
+  // Recorded on 2026-10-12 before the cache existed (same options, same engine);
+  // the two boards the `sensor-wrap` rule changed were re-recorded on 2026-10-19.
   const golden = [
     { opts: { cols: 6, rows: 6, seed: 1, difficulty: 'medium' }, url: 'pentopia/6/6/j6m8g4g2j8m4l//p' },
     { opts: { cols: 6, rows: 6, seed: 2, difficulty: 'medium' }, url: 'pentopia/6/6/8has5i61h9k1j//p' },
-    { opts: { cols: 8, rows: 8, seed: 3, difficulty: 'medium' }, url: 'pentopia/8/8/haaocr1s9hcp3g1m//p' },
-    { opts: { cols: 6, rows: 6, seed: 4, difficulty: 'hard', opening: 'narrow' }, url: 'pentopia/6/6/maq9m9h8g1i//p' },
+    { opts: { cols: 8, rows: 8, seed: 3, difficulty: 'medium' }, url: 'pentopia/8/8/haaocr1s9hcp3i9k//p' },
+    { opts: { cols: 6, rows: 6, seed: 4, difficulty: 'hard', opening: 'narrow' }, url: 'pentopia/6/6/iag6nav8h54//p' },
     { opts: { cols: 8, rows: 8, seed: 5, difficulty: 'hard', opening: 'narrow' }, url: 'pentopia/8/8/j6h2o3l2j6pah9r1j8h//p' },
   ] as const;
 

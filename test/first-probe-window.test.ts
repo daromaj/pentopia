@@ -58,12 +58,16 @@ function minimize(l: Layout, gates: MinimizeGates = {}): Puzzle {
 
 describe('minimizer gate on the first what-if', () => {
   it('a board that ends with a what-if has it inside the window', () => {
+    // Seven layouts and hi = 0.9 (was six and 0.7): since `sensor-wrap`, the one
+    // layout whose gated minimization used to end on a what-if (seed 3, at 0.59)
+    // closes without one. The next what-if is the seventh layout (seed 8, at
+    // 0.84), so the old six-layout 0.7 window would leave nothing to check.
     let gated = 0;
-    for (const l of layouts(8, 8, 6)) {
-      const out = minimize(l, { firstProbeWindow: { lo: 0, hi: 0.7 } });
+    for (const l of layouts(8, 8, 7)) {
+      const out = minimize(l, { firstProbeWindow: { lo: 0, hi: 0.9 } });
       const at = probeWalk(buildModel(out), { cap: HARD_PROBE_CAP }).firstProbeAt;
       if (at === null) continue;
-      expect(at, `seed ${l.seed}`).toBeLessThanOrEqual(0.7);
+      expect(at, `seed ${l.seed}`).toBeLessThanOrEqual(0.9);
       gated++;
     }
     expect(gated).toBeGreaterThan(0);
@@ -103,7 +107,7 @@ describe('generatePuzzle with firstProbeWindow', () => {
   });
 
   it('unset, deals the boards it dealt before the option existed', () => {
-    // Recorded at a334cc0, before the option. flip/experiments/engine-cleanup-fingerprint.ts
+    // Recorded at a334cc0, before the option; re-recorded for `sensor-wrap`. flip/experiments/engine-cleanup-fingerprint.ts
     // covers every rung; these pin the extra-hard request shape at 6x6 and 8x8.
     for (const [cols, rows, seed, url] of UNGATED) {
       expect(generatePuzzle({ ...base, cols, rows, seed }).url, `${cols}x${rows} seed ${seed}`).toBe(url);
@@ -112,28 +116,33 @@ describe('generatePuzzle with firstProbeWindow', () => {
 
   it('set, deals the boards recorded when the gate was first written', () => {
     // Recorded with the experimental `firstProbeSteer: { mode: 'gate', window }`, which
-    // this option replaced; the same gate, so the same boards.
+    // this option replaced (the same gate, so the same boards); re-recorded when the
+    // `sensor-wrap` rule changed the deducer.
     for (const [cols, rows, seed, url] of GATED) {
       expect(generatePuzzle({ ...base, cols, rows, seed, firstProbeWindow: window }).url, `${cols}x${rows} seed ${seed}`).toBe(url);
     }
   });
 });
 
-/** `generatePuzzle(base)` URLs recorded with the engine at a334cc0. */
+/**
+ * `generatePuzzle(base)` URLs, first recorded at a334cc0; re-recorded when the
+ * `sensor-wrap` rule (tier 5) changed what the deducer sees (2026-10-19).
+ */
 const UNGATED: [number, number, number, string][] = [
-  [6, 6, 1, 'pentopia/6/6/8i642kat55g1k//p'],
-  [6, 6, 2, 'pentopia/6/6/q68ndn8g4i//p'],
-  [6, 6, 3, 'pentopia/6/6/ap6h3i9h6n1k//p'],
+  [6, 6, 1, 'pentopia/6/6/8i6tai6k2l//p'],
+  [6, 6, 2, 'pentopia/6/6/8icoazg//p'],
+  [6, 6, 3, 'pentopia/6/6/haoaj5k1g5p//p'],
   [8, 8, 1, 'pentopia/8/8/8nak6jch6p3j3h6v5g9h//p'],
-  [8, 8, 2, 'pentopia/8/8/m6har5k7j5k1iat89g4g//p'],
+  [8, 8, 2, 'pentopia/8/8/h2j2jcjbhch5zk9l8g9hcg5//p'],
 ];
 
-/** `generatePuzzle({ ...base, firstProbeWindow: { lo: 0.35, hi: 0.65 } })` URLs; first what-if at 0.59, 0.42, 0.57, 0.36, 0.46, 0.59. */
+/** `generatePuzzle({ ...base, firstProbeWindow: { lo: 0.35, hi: 0.65 } })` URLs; first what-if at 0.50, 0.36, 0.61, 0.43, 0.60, 0.51
+ * (re-recorded with the `sensor-wrap` rule, 2026-10-19). */
 const GATED: [number, number, number, string][] = [
-  [6, 6, 1, 'pentopia/6/6/8i64h9x55h1j//p'],
-  [6, 6, 2, 'pentopia/6/6/q68ndn8g4i//p'],
-  [6, 6, 3, 'pentopia/6/6/ap6h3i9h6n1k//p'],
+  [6, 6, 1, 'pentopia/6/6/2ah44r1q11i4//p'],
+  [6, 6, 2, 'pentopia/6/6/8icoazg//p'],
+  [6, 6, 3, 'pentopia/6/6/haz1n5g14//p'],
   [8, 8, 1, 'pentopia/8/8/gaaai6u3zg6t9h5//p'],
-  [8, 8, 2, 'pentopia/8/8/k6g41zg5i9l9hcx4//p'],
-  [8, 8, 3, 'pentopia/8/8/ahag4g4aybx48m1g9k//p'],
+  [8, 8, 2, 'pentopia/8/8/8g2r5j5h1gazndg89l//p'],
+  [8, 8, 3, 'pentopia/8/8/iai2oas5j7matc9g5g//p'],
 ];
